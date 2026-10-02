@@ -1,0 +1,29 @@
+# pnpm 设置。**注意：pnpm 10+ 把这类设置放在这里，不放 package.json 的 pnpm 字段。**
+#
+# 本文件由 pnpm 自动创建/维护：已有决策会保留，新出现的待批包会被追加为
+# 占位符 `set this to true or false`。所以每次装新依赖后要回来看一眼。
+#
+# pnpm 10+ 开启 strictDepBuilds：任何携带 install/build 脚本的依赖都必须在此显式表态，
+# 未列出的即视为硬性安装错误 —— 实测表现是 `pnpm run <script>` 前的依赖校验
+# 会以 exit 1 失败（错误里只提示 `pnpm approve-builds`，不说该改哪个文件）。
+#
+# 策略：**默认拒绝，只批准真正需要的**，且逐个看脚本做什么再决定。
+allowBuilds:
+  # ── 直接拒绝：传递依赖，对我们是无操作 ──
+  # 来自 @earendil-works/pi-ai（经 dsh-llm-pi-ai 引入）。DSH 也拒绝它们。
+  '@google/genai': false
+  protobufjs: false
+
+  # ── 批准：shell 执行路径的核心 ──
+  # postinstall 是 `node scripts/ensure-spawn-helper.mjs`（装 spawn helper）。
+  # 我们真的要跑子进程，且 DSH 自己这里也是 true。
+  '@deepseek-ai/dsh-subprocess-local': true
+
+  # ── 拒绝：本项目用不到的原生包 ──
+  #   koffi    —— Windows ACL 沙箱的原生 FFI。我们走 Tier 1（subprocess + bash），不做 ACL 沙箱。
+  #   node-pty —— PTY / 持久终端后端。我们没有 terminal 行。
+  # DSH 自己允许这两个，是因为它两个都用。**上下游用途不同，批准清单本就该不同** ——
+  # 照抄上游的 allowBuilds 等于放宽了自己的攻击面。
+  koffi: false
+  node-pty: false
+  lefthook: true

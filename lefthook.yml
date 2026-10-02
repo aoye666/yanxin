@@ -1,0 +1,21 @@
+# Lefthook — pre-commit 质量门控
+#
+# 每次提交前自动运行 typecheck + lint + test 三项检查（顺序执行），
+# 任一失败则整体拦截提交，阻止未验证的变更进入版本库。
+#
+# ⚠️ 本配置**不设 glob 文件过滤** —— lefthook v2 的语义是：无 glob 无 files 的命令
+#    在暂存区非空时总是运行（实测 2.1.14）。这是有意的：typecheck 会被 tsconfig /
+#    package.json 这类非 ts 文件影响，所以任何提交都值得跑一遍。
+#
+# 临时跳过（紧急）：LEFTHOOK=0 git commit ...
+# 文档：https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: false
+  commands:
+    typecheck:
+      run: pnpm run typecheck
+    lint:
+      run: pnpm run lint
+    test:
+      run: pnpm run test

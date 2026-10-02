@@ -1,0 +1,388 @@
+# 研心 (YanXin) bundle patch —— 插进 DSH 装配树的插件行。
+#
+# 层序（后者按行胜出）：bundle patches → profile 的 cordis.patch.yml
+#                       → $DSH_HOME/cordis.patch.yml → 每个 --patch
+#
+# ⚠️ patch 只有两种操作：`insert`（追加到根列表，或 id 指向 group 时 push 进它的 config）
+#    与【按 id 整字段覆盖】。**没有深度合并** —— 改一个键也要把整个 config 重写。
+#
+# ⚠️ patch 只适合放【行结构与行级开关】。需要被运行时服务读取的【内容配置】
+#    （LLM provider 路由、窗口时段、管理员名单）走 $DSH_HOME/settings.yaml —— 见 ADR 0004。
+#
+# 当前只放已实现的东西。memory / onebot / window / world / admin / setup 已就位；
+# console 会在后续任务（T31）里加进来。
+
+- insert:
+    # HTTP 服务 —— 控制台 `/yanxin` 的载体（T31）。
+    #
+    # ⚠️ **dsh-base 不组合它**（那是 `@deepseek-ai/dsh-web-app` 那个 bundle 的事，`dsh web`
+    #    走的是 `--profile web`）。而我们的 console 行 `inject: ['webServer']` —— 缺了它
+    #    控制台会 pending，boot 直接报 "1 entry did not activate"（ADR 0003 的同一个形态）。
+    #
+    # `host` 只能是 `127.0.0.1` 或 `0.0.0.0` 两个值，这里写**回环**：
+    # 控制台是本机运维界面，没有任何理由对外监听（spec §6.12）。
+    # ⚠️ 而且我们的处理器**自己还守一道**（非回环请求一律 403）—— 那是代码里的判定，
+    #    可被测试证伪；这一行只是第一道门。
+    #
+    # `port` 是**部署值**（ADR 0004）：这里给个默认（3080），要改就在 profile 的
+    # cordis.patch.yml 里按 id 覆盖整行 config。
+    - id: web-server
+      name: '@deepseek-ai/dsh-host-webserver'
+      config:
+        host: 127.0.0.1
+        port: 3080
+
+- insert:
+    # 控制台日志导出器。
+    #
+    # ⚠️ dsh-base **没有**组合任何 logger 导出器（`packages/bundle/base/cordis.patch.yml`
+    #    里 grep 不到 logger 行）。后果是 `ctx.logger.info(...)` 无处可去 —— 在 web profile 下
+    #    日志靠界面显示，而 headless 形态（`yanxin` profile）就**完全看不到日志**。
+    #    排查 OneBot 连接时这一点会让人以为"服务没反应"。
+    #    故由我们的 bundle 显式挂上。
+    - id: logger-console
+      name: '@deepseek-ai/cordis-plugin-logger-console'
+      config:
+        # ⚠️ **必须显式放开级别阈值，否则 WARN 会被静默丢弃。**
+        #
+        # cordis 的过滤逻辑（lib/index.js:474）：
+        #   if ((exporter.levels?.[name] ?? exporter.levels?.default ?? this.level ?? 1) < level) continue;
+        # 而级别数值是 ERROR=0 < INFO=1 < WARN=2 < DEBUG=3（数越小越严重）。
+        # 无配置时阈值 = 1 → `1 < 2` 成立 → **warn 与 debug 全部被跳过**。
+        #
+        # 实测后果：我们的串号检测告警（security 相关，走 warn）在日志里完全看不到 ——
+        # 而"安全告警静默"是不该发生的。故把阈值放到 3（放行全部级别）。
+        levels:
+          default: 3
+
+    # 出网 URL 守卫（spec §7.4-A）
+    # 为什么必须自己写：@deepseek-ai/dsh-web-fetch-http 明确不做私网/SSRF 防护
+    #   (src/provider.ts:6 "Private-network and SSRF protection is not implemented")。
+    # 覆盖 web_fetch 与任意带 url/urls 参数的工具（含绕过 preset 裁剪的 MCP 工具）。
+    - id: url-guard
+      name: 'yanxin/src/net/url-guard.ts'
+
+    # shell 审计（T36 / spec §6.10）：每条 bash 命令一行 —— 时间、会话（及从会话命名
+    # 解析出的账号）、完整命令（**密钥已脱敏**）、exit code、耗时、输出字节数、危险等级。
+    #
+    # 放 **host 平面**的理由：审计是横切关注点，不属于任何 agent 的能力面 ——
+    # 它不注册任何工具（ADR 0013 禁的是"工具靠 host 行泄漏进 agent 工具表"），
+    # 只是监听 `tools/pre-execute`（记开始时刻）与 `tools/result`（落盘）。
+    # 放 preset 的坏处是：三个 preset 各挂一份 = 同一份日志被写三遍。
+    - id: shell-audit
+      name: 'yanxin/src/admin/shell-audit.ts'
+
+    # 管理员名单服务（T3）。名单本身在 settings 的 `yanxin-admin` 命名空间里，
+    # 由控制台（T32）或 setup 写入；**没有配置时名单为空 → isAdmin 一律 false（fail-closed）**。
+    - id: admin
+      name: 'yanxin/src/admin/index.ts'
+
+    # 记忆服务（T13/T14）。契约外壳（search/record/consolidate/health）+ ReMe provider。
+    #
+    # 这里【不写 config】—— provider 与 endpoint 属于**部署配置**（走 settings 的
+    # `yanxin-memory` 命名空间，或 profile patch）。默认 `provider: none`：
+    # **契约就位但无后端**，召回一律为空、对话照常（记忆是增强，不是依赖）。
+    #
+    # 启用 ReMe 的方式（在那台机器的 settings.yaml 或 profile patch 里）：
+    #   yanxin-memory:
+    #     provider: reme
+    #     endpoint: http://127.0.0.1:2333   # ⚠️ 只允许回环，非回环会在装载期拒绝
+    - id: memory
+      name: 'yanxin/src/memory/service.ts'
+
+    # preset 服务（模式原语的容器）。
+    #
+    # ⚠️ **dsh-base 不组合它**（对比：dsh-web-app 有）。缺了它的后果是 bridge 一直
+    #    pending 在 `agentPresets` 上，最终 boot 报 "1 entry did not activate" ——
+    #    这正是我们要的 fail-loud：宁可起不来，也不要一个没有 preset（既无工具也无人格）
+    #    的 agent 在跑。见 ADR 0003 关于 mount 的说明。
+    #
+    # `default` 是必填（schema 里 required）。preset 本身装在
+    # `$DSH_HOME/.agent-presets/`（user root，`includeUserRoot` 默认 true）。
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: xiaoyan-agent
+
+    # OneBot 反向 WS 服务端（T8/T9）。OneBot 实现（SnowLuma / NapCat）作为客户端反连过来。
+    #
+    # ⚠️ 这里【不写 config】—— 端口、接入路径、access token、账号注册表都属于**部署配置**，
+    #    放在 profile 的 cordis.patch.yml（$DSH_HOME/profiles/<name>/cordis.patch.yml）。
+    #    理由有二：① ADR 0004 的分层（bundle patch 只放行结构与行级开关）；
+    #    ② token 是密钥，而本文件在版本库里。
+    #    缺 config 时启动会因 schema 必填校验而**明确报错**，不会静默监听。
+    - id: onebot
+      name: 'yanxin/src/onebot/service.ts'
+
+    # bridge：把入站消息变成一次 agent 对话，并把回复发回去（T11）。
+    #
+    # 它的 `groupTrigger` / `dryRun` 是**行为政策**（会在真实群里对外可见），
+    # 所以放 profile patch 由运营者决定，而不是写在我们仓库的默认值里。
+    # 无 config 时的默认是：groupTrigger=mention（群里仅被 @ 才回）、dryRun=false。
+    - id: onebot-bridge
+      name: 'yanxin/src/onebot/bridge.ts'
+
+    # 窗口调度（T17，spec §6.6）。每分钟裁决"现在是否在开放窗口内"，并把
+    # World 引擎行启停到对应状态 —— 这是**主动行为**的闸门（被动响应不受它管）。
+    #
+    # ⚠️ **必须 root 级常驻**：它启停的是引擎行，自己不能被同一开关关掉，否则
+    #    "窗口关闭 → 调度器也没了 → 永远醒不来"。
+    #
+    # 时段属于**内容配置**（运行时可改），走 settings 的 `yanxin-window` 命名空间；
+    # 行 config 只放装配结构（引擎行 id / 裁决间隔），缺省时全部走内置默认。
+    - id: window
+      name: 'yanxin/src/window/index.ts'
+
+    # World 引擎（T17 占位，Phase 5 填实世界模拟）。它的启停完全由上面的 window
+    # 服务驱动（窗口打开 → 装载，关闭 → 卸载），不重启进程。
+    #
+    # ⚠️ 默认 `disabled: true` 是**有意为之的 fail-safe**：启动瞬间窗口服务会立即
+    #    裁决一次并对齐状态（窗口开着就装载）。若窗口服务因故没能裁决，引擎保持
+    #    关闭 —— 宁可不产生主动行为，也不要它不受控地跑起来。
+    #
+    # ⚠️ profile 那一行**必须配 `cwd`**，且与桥 / bash 两行的值一致：她的世界会话
+    #    若不带 cwd 会落到 `process.cwd()`（内核检出目录），而 agent 会把该目录往上
+    #    的工作区 `AGENTS.md` 注入 prompt —— 她的内心独白里就会出现内核的工程指令。
+    - id: yanxin-world-engine
+      name: 'yanxin/src/world/engine.ts'
+      disabled: true
+
+    # 世界模型适配器（T27b）：把 `ctx.llm` 接成 `CallWorldModel` —— **一次性调用**
+    # （无会话、无历史），供两处消费：裁定者（T25 的到期结算）与创世（T29 的世界步）。
+    #
+    # ⚠️ 它是**服务**（进程级单例）而不是工具行 —— 消费它的两处都在 host 平面，
+    #    与 `web-fetch-provider` 同一个道理（ADR 0013：provider 放 host 平面）。
+    #
+    # ⚠️ `inject: ['llm']` 是硬依赖：没有 LLM 就没有这个适配器，这一行会 pending
+    #    （而不是提供一个"调用必失败"的假服务 —— 那种静默失败最难查）。
+    #
+    # 路由：行 config 可覆盖 provider/model；缺省走 settings 的 `agent-default-model`
+    # 当前选择（与桥选模型同一处口径，不会有第二套默认）。
+    - id: world-model
+      name: 'yanxin/src/world/model.ts'
+
+    # 初始化向导（T28，spec §6.11）：`persona → background → world → accounts → ready`。
+    #
+    # 它是一个**状态机服务**（Web 向导只是它的前端，控制台在 Phase 7 接上）。装到位 =
+    # 把包内的 `persona/*.md` 与 `presets/*` 写到 `$DSH_HOME`，进度落 `yanxin/setup.json`。
+    #
+    # ⚠️ 这里【不写 config】：`$DSH_HOME` 取环境变量/默认值，包根按本文件位置推导 ——
+    #    都是装配事实，不是要运营者填的内容（只有测试才需要指向临时目录）。
+    #
+    # ⚠️ 它**不 inject onebot**：账号注册表只是 `accounts` 步的证据来源，用 `ctx.get` 软查 ——
+    #    写进 inject 会让向导 pending 在 OneBot 上，而"OneBot 还没配好"恰恰是它要报告的状态。
+    #
+    # ⚠️ 它**不启动 agent**：未 ready 时的拦截在 T30（bridge 的守卫），不在这里。
+    - id: setup
+      name: 'yanxin/src/setup/index.ts'
+
+    # 控制台（T31，spec §6.12）：`/yanxin` 的页面与接口。**只绑回环**是本服务的纪律
+    # （非回环请求在处理器里一律 403 —— webServer 的 host 配置是另一道门，但我们看不到它，
+    # 所以自己再守一道，那道门能被测试证伪）。
+    #
+    # ⚠️ 写操作需要环境变量 `YANXIN_CONSOLE_TOKEN`：**没配 = 一律拒写**（fail-closed），
+    #    而不是"不设防"。token 只从环境变量来（不进仓库、不进 settings、不进 patch）。
+    #
+    # ⚠️ 这里【不写 config】：挂载路径有内置默认（`/yanxin`），部署要改再写。
+    #    业务服务一个都不 inject（软查）—— 某个服务不在时只是那一页降级。
+    - id: console
+      name: 'yanxin/src/console/index.ts'
+
+    # 控制台的页（T32–T34）：每页一个插件行，`inject: ['console']`，用
+    # `ctx.console.page(...)` / `ctx.console.api(...)` 登记 —— 登记绑在**自己的 fiber** 上，
+    # 于是"卸载这一行 = 这一页消失"（不需要谁记得写清理）。
+    - id: console-setup-page
+      name: 'yanxin/src/console/pages/setup.ts'
+      # 初始化向导（T34）：整套东西唯一的人工入口 ——
+      # 装人格 / 装背景 / 创世 / 绑账号四步要在这里点得动。
+
+    # ── T32 的三页：可写（走 ctx.settings / ctx.admin）──────────────────────
+    # 写操作的**审计不在这三页里**：控制台服务对所有非 GET 请求统一留痕
+    # （`$DSH_HOME/yanxin/audit/console.jsonl`）——页里再写一份就有两套了。
+    - id: console-admins-page
+      name: 'yanxin/src/console/pages/admins.ts'
+      # 管理员页：名单增删（`ctx.admin.add/remove`，改完立刻生效）。
+    - id: console-window-page
+      name: 'yanxin/src/console/pages/window.ts'
+      # 时段页：改主动行为窗口；窗口服务 watch 着自己的命名空间，提交即重新裁决。
+    - id: console-settings-page
+      name: 'yanxin/src/console/pages/settings.ts'
+      # 设置页：命名空间总览 + **模型路由**（唯一可写项，可选清单来自 llm-pi-ai）。
+
+    # ── T33 的三页：只读视图 ────────────────────────────────────────────────
+    - id: console-world-page
+      name: 'yanxin/src/console/pages/world.ts'
+      # 世界页：TU / 纪元 / 事务数 / 她此刻在哪儿 / 笔记本（改世界只能走内核，这页没有写口）。
+    - id: console-memory-page
+      name: 'yanxin/src/console/pages/memory.ts'
+      # 记忆页：检索 + 溯源（检索走 POST ⇒ 要 token：记忆里是她全部的对话痕迹）。
+    - id: console-talk-page
+      name: 'yanxin/src/console/pages/talk.ts'
+      # 对话页：事件时间轴（只看**本进程活着的**会话 —— 磁盘日志是分帧 zstd，见页内说明）。
+    - id: console-log-page
+      name: 'yanxin/src/console/pages/log.ts'
+      # 日志页：实例运行日志的尾部（只读）。默认扫系统临时目录最新的 yanxin*.log；
+      # console 行 config 的 logFile 可钉死路径。
+    - id: console-onebot-page
+      name: 'yanxin/src/console/pages/onebot.ts'
+      # OneBot 连接页：改监听地址 / 端口 / access token / 路径 / 超时（写 settings 的
+      # `yanxin-onebot`，服务 watch 到就换绑 —— 不用重启）。
+      # ⚠️ 非回环监听必须已有 token 且带确认勾选，两条缺一即拒（见该文件的安全门）。
+      # 账号注册表（selfId → preset）在这一页**只读** —— 那是能力构成，改它走 profile patch。
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 裁剪 host 平面的能力（spec §6.10 / ADR 0013）
+#
+# 这一块是**必须的**，不是加固 —— 缺了它有两类后果：
+#
+# ① **功能阻塞**：`dsh-base` 的 `pwsh-sandbox` 把 `shell` 服务注册成
+#    `<SandboxPwshExecutor>`，于是 `xiaoyan-admin` preset 里的 `bash`
+#    （`dsh-bash-local`，也注册 `shell`）**挂载失败** → 管理员私聊整个会话处理不了
+#    （"service \"shell\" has been registered at <SandboxPwshExecutor>"）。
+#    2026-09-25 加第一个管理员时第一次走这条路就撞上了 —— 在此之前名单一直是空的，
+#    这条路径从未被真实跑过。
+#
+# ② **能力越界**：`dsh-base` 把这些工具注册在 **host 平面**（root 作用域），
+#    而 preset 只能往 agent 平面**加**行、**减不掉** host 行。结果 `xiaoyan-agent`
+#    （群聊 / 非管理员私聊）实际拿到 26 个工具，含 `pwsh` / `read` / `write`，
+#    并**实测真的执行了**（PowerShell 输出了环境变量、列出了 $DSH_HOME 结构）。
+#
+# 做法照抄官方 `@deepseek-ai/dsh-web-app` bundle：**禁掉 host 行，改由 preset 显式 mount**。
+# 我们的 preset 已经声明了自己需要的（`tool-web` 三个都有；`tool-bash` 只在 admin），
+# 所以禁用是安全的 —— 而"某个模式能拿到什么工具"从此**只由 preset 决定**，
+# 这正是 spec §6.10 要的"能力声明期裁掉，而不是运行期判定"。
+#
+# ⚠️ 加新工具时的纪律：**在 preset 里声明，不要依赖 host 行**。
+
+# ── host 平面的 web 抓取 provider ──────────────────────────────────────────
+#
+# base 只组合了 `dsh-web` / `dsh-web-search-deepseek`，**没有** `dsh-web-fetch-http` ——
+# 缺 provider 时 `web_fetch` 工具在但调用必失败。所以要自己补。
+#
+# ⚠️ **必须补在 host 平面，不能补在 preset 里**：provider 注册是**进程级单例**，
+# 两个 preset 各声明一份会让第二个挂载失败：
+#
+#   preset "xiaoyan-agent" failed to mount: a web provider with id "http"
+#   is already registered
+#
+# （2026-09-25 实测：admin 挂载那条路修好之后才暴露 —— 在此之前 admin 从没挂上过，
+# 所以只有 agent 注册了 provider，冲突被掩盖着。）
+#
+# 分工与 shell 同构：**服务提供者放 host 平面，模型可见的工具由 preset 声明**。
+- insert:
+    - id: web-fetch-provider
+      name: '@deepseek-ai/dsh-web-fetch-http'
+      config:
+        # spec §7.4-A 第 4 条的传输限额。⚠️ **patch 是整字段覆盖** —— 这里写出的键
+        # 会一起替换 provider 的整个 config，所以把"我们要求的上限"写全，别只看没写的那几个
+        # （未写的键由 provider 自己的 schema 填默认：maxUrlLength 2048 / maxBodyChars 100000 /
+        # userAgent）。
+        #
+        # `maxRedirects` 必须是 **≤ 3**（spec 的硬要求），而上游默认是 **5**
+        # （packages/web/web-fetch-http/src/index.ts:34-56 的 `Config.maxRedirects`）——
+        # 不写这一行就等于默认放行 5 跳。
+        maxRedirects: 3
+        # 体积与超时也显式收窄：单次抓取最多 2 MB / 30 秒。
+        maxResponseBytes: 2000000
+        timeoutMs: 30000
+
+        # 重定向的**每一跳**为什么不在这里逐个校验（诚实记录）：
+        # 这个 provider 只跟**同源**跳转，跨源一律拒绝并抛 `WEB_REDIRECT_BLOCKED`
+        #   · policy.ts:43-54  `isSameOrigin`：scheme + hostname + port 三者全等
+        #   · provider.ts:55-101 `followAndRead`：每跳先 `validateFetchUrl` 再判同源，不同源即抛；
+        #     且请求用 `redirect: 'manual'`，Node 不会替我们偷偷跟
+        # 于是"实际会发起的每一个 URL"都落在**我们已校验过的那个 origin** 之内 ——
+        # 我们 own 的接缝（pre-execute）只需校验起始 URL + 这里卡住跳数上限。
+        # 若上游哪天改成跟随跨源，这条纪律就失效了：那正是 T35 的回归用例要盯的形态。
+
+# ── host 平面的 shell 服务：用 Git Bash，而不是 pwsh 沙箱 ──────────────────
+#
+# **为什么必须提供它**：`@deepseek-ai/dsh-permission-presets` 等 host 行 `inject` 了
+# `shell` 服务。把提供者（`pwsh-sandbox`）单纯禁掉会让 boot 直接失败：
+#
+#   dsh: plugin tree failed to load: 1 entry did not activate
+#   @deepseek-ai/dsh-permission-presets: pending (waiting for service: shell)
+#
+# 所以正确做法不是"禁掉提供者"，而是**换掉提供者** —— 让 host 平面拿到 Git Bash。
+# 这样三件事同时成立：
+#   · `permission-presets` 有 shell 可用；
+#   · `xiaoyan-admin` 的 `tool-bash` 有正确的执行器（不再与 pwsh 冲突、也不再语法错配）；
+#   · 模型**仍然看不到任何 shell 工具**（工具行在下面被禁用）—— 能力只由 preset 决定。
+#
+# `cwd` 属于部署配置（ADR 0004 的分层），在 profile 的 cordis.patch.yml 里覆盖。
+- insert:
+    - id: bash
+      name: '@deepseek-ai/dsh-bash-local'
+      config:
+        # Tier 1：DSH 现成的本地 bash。不用沙箱版 —— `dsh-bash-sandbox` 在 Windows 无 runner。
+        # 前提是 DSH 在 Git Bash 中启动（本机 Git 在 D 盘，不得硬编码盘符，见 ADR 0001）。
+        timeoutMs: 120000
+        maxOutputBytes: 65536
+
+# shell 服务提供者：禁掉沙箱 pwsh —— 上面那行会接管 `shell`。
+# （spec §6.10 的 Tier 1 方案里本来就写了这个 disable，此前从未落地。）
+# 也顺带避免"两套 shell 语法混用" —— 我们统一用 Git Bash。
+- id: pwsh-sandbox
+  disabled: true
+
+# `permission-presets` 要求 `ctx.shell` 的执行器**是受限的**（有 sandboxMode），
+# 而我们提供的是非沙箱的 Git Bash，于是它拒绝加载、连带 boot 失败：
+#
+#   permission: the mounted bash executor does not confine (no sandboxMode) —
+#   presets bundle a sandbox mode, so composing this plugin over an unconfined
+#   executor is a misconfiguration
+#
+# 官方 API 目录对它的描述也是 "Requires a **confining** `ctx.shell` executor
+# and `ctx.approval`" —— 所以**配非沙箱执行器时它本就不该被装载**，禁它是正确配置。
+#
+# 代价：失去 `/permission` 命令与 `permissions` session 投影（面向交互式用户的
+# 权限预设）。小研是 headless bot，不提供 slash command，也不用这两样。
+# 消费者只有 `tool-cordis` 的 API 目录，而那个扩展在 base 里并未装载。
+- id: permission
+  disabled: true
+
+# 模型可见的工具行 —— 逐个禁用。清单以 `packages/bundle/base/cordis.patch.yml`
+# 里实际存在的 `tool-*` 行为准（2026-09-25 核对）。
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-str-replace-editor
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-ralph
+  disabled: true
+- id: tool-result-pruner
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-web
+  disabled: true
+
+# plan mode 是**编码 agent 的工作流**（先出计划、经用户批准再动手改代码），小研不需要：
+# 它注册出 `exit_plan_mode` 工具，还会往 prompt 里注入一大段 plan-mode 规则
+# （base patch 的 `plan-mode` 行，prompt 原文 "You are in plan mode. Stay in plan mode
+# until exit_plan_mode succeeds…"）—— 那既污染小研的人格，又给模型一个没有意义的工具。
+- id: plan-mode
+  disabled: true

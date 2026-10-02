@@ -1,0 +1,35 @@
+# ── 密钥与凭据：绝不入库 ──────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials*.yaml
+.credentials.yaml
+
+# spike 临时产物（含明文密钥，见 docs/decisions/0002 附带发现）
+spike/
+
+# ── 运行时数据（DSH 约定放 $DSH_HOME，这里挡掉误建的）──
+data/
+node_modules/
+dist/
+lib/
+logs/
+
+# ── 本地客户端安装包（NapCat/SnowLuma，二进制不入库）────
+napcat/
+
+# ── 工具与缓存 ────────────────────────────────────────
+*.log
+.DS_Store
+Thumbs.db
+.vitest/
+coverage/
+tsconfig.tsbuildinfo
+
+# Mimosa 扫描插件的会话状态与报告（工具产物，非项目源码）
+.mimosa/
+
+# Qoder IDE 的工作目录（工具产物）
+.qoder/

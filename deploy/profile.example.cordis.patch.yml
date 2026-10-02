@@ -1,0 +1,152 @@
+# 研心 profile 的**部署配置层**（模板）
+#
+# 由 `node scripts/install.mjs` 渲染成 `$DSH_HOME/profiles/<名字>/cordis.patch.yml`。
+# 手改也可以 —— 但要知道 `{{占位}}` 这些是要被替换掉的。
+#
+# ## 这一层放什么（ADR 0004 的分层纪律）
+#
+# 放**这台机器上怎么跑**：端口、接入路径、access token、账号注册表、工作目录、模型路由。
+# **不放**插件行的结构 —— 那在 bundle 的 `cordis.patch.yml` 里（入库的那份）。
+#
+# ⚠️ 两条会咬人的规则：
+#   · **patch 没有深度合并**：覆盖某一行的 config 就是**整字段替换**，不是改一个键。
+#     所以这里每一段都写完整；漏掉的键会回落到代码缺省（这正是"我只改了一个值怎么别的全没了"的成因）。
+#   · **token 只能出现在这里**：本文件在 `$DSH_HOME` 下，不在版本库里。
+#     入库的那份 patch 一旦内联密钥，`dsh --dump-config` 会**明文打印**它（spec §7.4-D）。
+
+# ── OneBot v11 反向 WS（我们的进程是**服务端**，NapCat/SnowLuma 来连我们）────
+#
+# ⚠️ 这一整段现在是**初值**：`host` / `port` / `path` / `token` 都能被 settings 的
+#    `yanxin-onebot` 覆盖（控制台 `/yanxin/onebot` 页改，不用重启）。
+#    谁在页面上改过一次，这里对应的每一项就对那一项失效 ——
+#    **改了 patch 没生效，先查 settings，别在这里来回改。**
+#    想回到 patch 的基线：删掉 `$DSH_HOME/settings.yaml` 里的 `yanxin-onebot` 段。
+#    ⚠️ `accounts` 不在那个例外里：它决定"这个号的会话挂哪套能力"，属于能力构成，
+#    控制台只读显示，要改只能改这里。
+- id: onebot
+  config:
+    # 只绑回环：客户端就在本机，没有理由对外监听。
+    # ⚠️ `port` 是 schema **必填**的（z.natural().required()），这一段不写 → 启动即校验失败。
+    #    这也是"bundle patch 里故意不给 onebot 任何 config"的原因（那行没有这台机器的信息）。
+    host: 127.0.0.1
+    port: {{ONEBOT_PORT}}
+
+    # 只接受这一个路径的升级请求（要与客户端里填的 URL 路径一致）。
+    # 留空 = 接受任意路径；写出来是为了让"谁能连"这件事可审。
+    path: {{ONEBOT_PATH}}
+
+    # 与客户端的「鉴权 Token」填同一个值。留空则不校验（本机跑可以，但别偷懒）。
+    # 两种承载都认：`Authorization: Bearer <token>` 头，或 URL 里的 `?access_token=`。
+    token: {{ONEBOT_TOKEN}}
+
+    # 账号注册表：**未注册的 selfId 连上来会被拒（403）**。
+    # `preset` 决定这个账号的会话挂哪套能力集（三个 preset 的差别只有 shell / 世界工具）：
+    #   xiaoyan-agent —— 群聊与非管理员私聊：人格 + 网页工具，**没有 shell**
+    #   xiaoyan-admin —— 管理员私聊：上一行 + shell（只有管理员拿得到）
+    #   xiaoyan-world —— World 模式：世界姿态人格，无 shell，但有世界工具
+    # 想双号（一个聊天一个世界）就在 accounts 下再加一条，selfId 换成第二个号。
+    accounts:
+      - selfId: '{{SELF_ID}}'
+        preset: xiaoyan-agent
+
+    # WS 协议层 ping 间隔。OneBot 规范里心跳默认是关的，所以存活检测只能自己做。
+    pingIntervalMs: 30000
+
+    # 调 API（发消息等）的响应超时。
+    callTimeoutMs: 15000
+
+# ── 桥：消息 → agent → 回发 ────────────────────────────────────────────────
+# 这几个键都是**对外可见的行为政策**，所以属于部署层而不是仓库。
+- id: onebot-bridge
+  config:
+    # mention = 群里只有被 @ 才回应
+    # name    = 被 @ **或**文本里出现名字都调用一次（每次带最近 contextMessages 句原话）
+    # never   = 群里永不回应（只想私聊测试时用）
+    #
+    # 选 `name` 的代价是"她可能插话"，这条由**人格**接住：persona/base.md 里要有一条
+    # "群里提到你，不等于在叫你"。先拿真群观察一段时间；若她变得爱插话，
+    # 第一步调 `nameWords`（换成更专指的字样），第二步才退回 mention。
+    groupTrigger: name
+
+    # 名字触发时认哪些字。要和人格里她的自称一致，否则"提到她"这件事对不上。
+    nameWords:
+      - 小研
+
+    # 每次调用带进群聊最近几句原话。0 = 不带。缓冲在内存里，重启即空。
+    contextMessages: 10
+
+    # true = 只把"本应发什么"记进日志，不真发。第一次观察她会怎么回时非常有用。
+    dryRun: false
+
+    # agent 的工作目录。preset 没有 fs/shell 工具时它是惰性的；
+    # ⚠️ 但下面的 `bash.cwd` 与 `yanxin-world-engine.cwd` **必须和这里一致**，理由见那两段。
+    cwd: {{WORKSPACE}}
+
+    # 超长回复截断（字符数）。
+    maxReplyChars: 2000
+
+# ── 管理员 shell 的落点 ─────────────────────────────────────────────────────
+# shell 的**提供者**（`@deepseek-ai/dsh-bash-local`，走 Git Bash）在 bundle patch 里，
+# 这里只覆盖部署相关的 cwd。
+#
+# ⚠️ **不写这一段，shell 就落在 DSH 的启动目录**：执行器的取值是
+#    `request.workdir ?? config.cwd ?? process.cwd()`。而 cwd **不是**安全边界 ——
+#    跑的是 `bash -c <命令串>`，命令里一句 `cd` 就出去了。真正的隔离只有容器/进程沙箱
+#    （Windows 上没有可用沙箱，见 spec §7.4-C）。这一段的作用是让她的文件足迹落在一个地方。
+- id: bash
+  config:
+    cwd: {{WORKSPACE}}
+    timeoutMs: 120000
+    maxOutputBytes: 65536
+
+# ── 世界模型（判断/裁定那一侧）可以走**另一条 LLM 路由** ─────────────────────
+# 为什么要和聊天分开：世界侧每个 tick 都要判定一次，量比聊天大得多。
+# 同一条路由的额度会被连跑打爆（实测 429），分开配额就互不挤占。
+#
+# **这一段默认注释掉**：不写就等于世界模型沿用 settings 的 `agent-default-model`
+# （与她聊天同一个口径，不会有第二套默认）。想分开就取消注释，并把两个值改成
+# `$DSH_HOME/settings.yaml` 里 `providers.<id>` **真实存在**的路由与模型 id。
+#
+# ⚠️ 填错不会报错给你看：429 与"模型不存在"都不抛异常（只在会话落盘的 finish 里），
+#    症状是"世界安静了"。key 走 `.credentials.yaml`，本文件不出现任何密钥。
+# - id: world-model
+#   config:
+#     provider: {{WORLD_PROVIDER}}
+#     model: {{WORLD_MODEL}}
+
+# ── 世界引擎：她的世界群 ───────────────────────────────────────────────────
+# bundle patch 里这一行带 `disabled: true` 的 fail-safe —— **不要在这里改成 false**：
+# 启停由窗口服务驱动（窗口打开 → 装载，关闭 → 卸载），手动放开会绕过作息。
+# 这里只覆盖 config。其余键（tickMs / account / worldDir …）不写，走代码缺省
+# （`account` 缺省取上面 onebot 注册表的**第一个**账号）。
+- id: yanxin-world-engine
+  config:
+    # 她主动发言要进的那个群。0 = 先不启用世界线；装完可在控制台世界页改（写 settings，下一句话生效）。
+    worldGroupId: '{{WORLD_GROUP_ID}}'
+
+    # ⚠️ 必须与上面桥 / bash 两行的 cwd 一致。漏掉这一行的后果很隐蔽：她的**世界会话**
+    #    会落到 process.cwd()（= DSH 的检出目录），而 agent 会把那个目录往上的工作区说明
+    #    注入 prompt —— 实测发现她的内心独白里混进了内核自己的 AGENTS.md
+    #    （"SQLite uses monotonic SCHEMA_VERSION" 这类写给改 DSH 的人看的话）。
+    #    聊天线一直是对的，只有世界线会漏。
+    cwd: {{WORKSPACE}}
+
+# ── 窗口调度：她的作息（默认 14:00–18:00 装载世界）──────────────────────────
+# 窗口服务在 bundle patch 里**默认就是装载的**，不需要在这里"启用"。
+# 想停：用控制台 `/yanxin/world` 的「暂停世界引擎」开关（写 settings 的
+# `yanxin-window.paused`，立即生效、不用重启、也不用动这个文件）。
+# ⚠️ 窗口开着 = 那段时间额度照烧。
+#
+# 下面这一行是**有意留空的锚点**（那行没有 config 可覆盖）：留着是为了让人一眼看出
+# "作息这层存在于 profile 层"，删掉也不影响装配。
+- id: window
+
+# ── 控制台 ─────────────────────────────────────────────────────────────────
+# console 是常驻服务（引擎卸下时控制台仍然可见可改），所以群号的初值挂在这里。
+# 运行时改群号走控制台世界页（写 settings），这里只是第一次装载用的值。
+- id: console
+  config:
+    worldGroupId: '{{WORLD_GROUP_ID}}'
+    # 统计库与日志路径都不写 → 走缺省（`$DSH_HOME/yanxin/stats.db`）。
+    # ⚠️ 首页仪表盘会显示计数与**群号**，而且是免凭据的本机读 —— 别把库指到版本库里。
+

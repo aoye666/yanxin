@@ -1,0 +1,4 @@
+name: 小研（世界）
+description: 毕小研在自己的世界里生活。世界工具待 Phase 5。不带 shell。
+# 出厂的四个 preset 是 1/2/3/4；order: 0 会排到最后（ADR 0004），故从 5 起。
+order: 7

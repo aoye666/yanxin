@@ -1,0 +1,78 @@
+{
+  "name": "yanxin",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "研心 (YanXin) — 小研的双模式 harness，一个 DeepSeek Harness bundle",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "aoye666",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "presets",
+    "persona"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json",
+    "presets": "node scripts/build-presets.mjs",
+    "deploy": "node scripts/install.mjs"
+  },
+  "pnpm": {
+    "_comment": "pnpm 10+ 的设置放在 pnpm-workspace.yaml，不在这里 —— 见该文件的 allowBuilds。"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.2",
+    "ws": "8.21.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-agent-presets": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-session": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-agent-presets": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-bash-local": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-session": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-shell": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-subprocess": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-subprocess-local": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.3",
+    "@types/node": "25.3.5",
+    "@types/ws": "8.18.1",
+    "lefthook": "^2.1.14",
+    "oxlint": "1.76.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.5",
+    "yaml": "2.9.1"
+  }
+}
