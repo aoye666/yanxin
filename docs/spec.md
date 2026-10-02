@@ -1076,7 +1076,7 @@ packages/web/web-fetch-http/src/policy.ts:18
 - ⚠️ **约束机器仍然挂着，只是对我们失效**：base 的 `sandbox`（`:169`）、`sandbox-policy`（`:172-176`，`mode: DSH_PERMISSION_MODE ?? 'workspace-write'`、`workspaceRoot: process.cwd()`）、`fs-sandbox`（`:443`）、`approval`（`:188-191`，`policy: 'ask'`）**全部 enabled**，而我们禁用的恰好是唯一会去执法的那行 `permission`（理由见 `cordis.patch.yml:322-336`：非沙箱执行器下它拒绝加载）。**spec 与 README 都不能给读者"有某层沙箱在起作用"的印象。**
 - **能跑 ≠ 安全。**
 
-**README 与 ADR 落实核验（这条是 §7.4-C 自己要求的，2026-10-02 已核）**：`README.md:161` 起有"安全与局限（必读）"一节，正文与本条的引用块等价（含"URL 守卫对 shell 出网无效""输入源全部按可信对待""必须迁入容器/进程沙箱"）；同一声明在 ADR 0009 内也有。**这一条 spec 的自述是真的**，只有上面那句"直接 `disabled: true`"要改。
+**README 落实核验（这条是 §7.4-C 自己要求的，2026-10-02 已核，同日随 README 精简改指路）**：README 的「安全须知」条目给出了同一结论的**摘要**（shell 是本机任意代码执行、没有沙箱、URL 守卫管不到 shell 的出网、要接不可信输入必须先迁容器/进程沙箱）；逐条落地情况与残留风险挪到了 `docs/development-notes.md` 第 6–8 节（那里也写明"无沙箱是平台条件性质"与"settings 页仍免凭据"）。**这条 spec 的自述是真的**，只有上面那句"直接 `disabled: true`"要改。
 
 **运行前提（硬约束）**：Tier 1 依赖 `bash` 在 PATH 上，即 **DSH 必须在 Git Bash 中启动**（探测逻辑不得硬编码盘符）。已做成显式诊断 —— `tests/integration/shell-tier1.spec.ts` 第一条断言即检查 `command -v bash`，失败信息直接说明是环境问题及两条出路。
 
@@ -1236,7 +1236,7 @@ packages/web/web-fetch-http/src/policy.ts:18
 
 ### 待实测（阻塞对应任务，不阻塞脚手架）
 
-5. ~~**⚠️ Git Bash 沙箱可用性（最高优先级）**~~ **✅ 已实测并记录（2026-10-02 复核收口）**：`dsh-bash-sandbox` 在 win32 **没有 runner**，`dsh-bash-local` 跑通（ADR 0009，11 条断言）。安全降级的确认可信并已按你的要求告知：写在 §7.4-C 引用块 + `README.md:161` 的"安全与局限（必读）"。
+5. ~~**⚠️ Git Bash 沙箱可用性（最高优先级）**~~ **✅ 已实测并记录（2026-10-02 复核收口）**：`dsh-bash-sandbox` 在 win32 **没有 runner**，`dsh-bash-local` 跑通（11 条断言）。安全降级的确认可信并已告知：README「安全须知」+ `docs/development-notes.md` 第 6 节 + 本条 §7.4-C。
    ⚠️ 两处措辞在这轮被纠正：沙箱**不是我们关掉的**（base 的 win32 平台门在关，本仓从无 `bash-sandbox` 的 disable 行）；且 `sandbox` / `sandbox-policy` / `fs-sandbox` / `approval` 四行**仍然 enabled**，失效的是唯一的执法行 `permission`。**"无沙箱"是平台条件性质，不是装配树的不变量。**
 6. ~~**⚠️ `@imhelper/onebot-v11` 的 v11 具体签名未逐字验证**~~ **✅ 走了预定的回退路（2026-10-02 复核）**：`@imhelper/onebot-v11` **从未被采用** —— `src/` 与 `package.json` 里没有它，只有 `ws@8.21.3`。协议层自己实现（`src/onebot/protocol.ts`：握手头 `X-Self-ID` / `X-Client-Role`、帧分类、API 帧构造；`src/onebot/service.ts`：反向 WS 服务端 + 账号注册表，ping/pong 用 WS 协议层）。已在线上跑通收/发（T10 与 `bridge.spec.ts` 28 条）。
 7. ~~**`MessageSource` augment 的确切模块说明符**（`@deepseek-ai/dsh-llm/types`？）~~ ——

@@ -55,12 +55,26 @@ function fakeCtx(): { ctx: any; fire: (event: string, ...args: unknown[]) => Pro
   }
 }
 
-/** 等文件出现（落盘是 fire-and-forget：DSH 的 emit 监听器不会被 await，测试要自己等）。 */
-async function waitForFile(path: string, timeoutMs = 1_000): Promise<string> {
+/**
+ * 等**至少一行完整的**审计落盘。
+ *
+ * ⚠️ 不能只等"文件存在"：`writeAudit` 是 `mkdir` → `appendFile` 两步，文件先以 0 字节存在，
+ *    负载高时 `readFileSync` 正好落在那个空档里 → 读到空串 → `lines.length > 0` 偶发失败
+ *    （全量跑 62 个 spec 文件时复现过一次，单跑永远绿 —— 典型的"测试自己抢跑"）。
+ *    所以判据改成：**至少一行，且以换行结尾**（`appendFile` 一次写完一行）。
+ */
+async function waitForFile(path: string, minLines = 1, timeoutMs = 3_000): Promise<string> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    if (existsSync(path)) return readFileSync(path, 'utf8')
-    if (Date.now() > deadline) throw new Error(`等不到审计文件：${path}`)
+    let text = ''
+    try {
+      text = readFileSync(path, 'utf8')
+    } catch {
+      /* 还没建 */
+    }
+    const lines = text.split('\n').filter((line) => line.length > 0)
+    if (lines.length >= minLines && text.endsWith('\n')) return text
+    if (Date.now() > deadline) throw new Error(`等不到审计文件里的 ${minLines} 行：${path}`)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }

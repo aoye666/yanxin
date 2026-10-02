@@ -99,7 +99,7 @@ tests/unit/   单元测试        tests/integration/   集成测试
 presets/      三个 agent preset（生成产物）
 persona/      人格源文件（base.md / profile.md / world.md）—— 出厂是空模板
 deploy/       profile.example.cordis.patch.yml（部署层模板）
-docs/         spec.md（单一事实源）
+docs/         spec.md（单一事实源）、development-notes.md（开发注意事项与未修清单）
 scripts/      install.mjs（部署）、build-presets.mjs（生成 preset）
 cordis.patch.yml   DSH 装配 patch（结构 + 行级开关）
 ```
