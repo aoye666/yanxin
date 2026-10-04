@@ -1,0 +1,61 @@
+# 研心 —— 一条 `docker compose up -d` 拉起来
+#
+# 值从同目录的 `.env` 来（照 `.env.example` 复制一份改）。
+# QQ 那侧（NapCat / SnowLuma）**不在这里**：它留在宿主机，反向 WS 连到本机的 8080。
+#
+#   cp .env.example .env   # 填三个 LLM 值 + 她的 QQ 号 + OneBot token
+#   docker compose up -d
+#   docker compose logs -f yanxin     # 控制台地址与 token 都在日志里
+#
+# ⚠️ 两个卷是**她本人**：sessions / 世界 / 审计 / 人格 / preset 都在 `yanxin-dsh` 里，
+#    记忆在 `yanxin-reme` 里。`docker compose down -v` 等于把她抹掉重来。
+# ⚠️ 3080 在这一版是**对远程可达**的（唯一凭据是 YANXIN_CONSOLE_TOKEN）；
+#    公网直连前请读 README 的安全一节，或先只绑 127.0.0.1：`ports: - "127.0.0.1:3080:3080"`。
+
+services:
+  yanxin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 国内网络把这几行的注释去掉（默认值是上游源，海外直接 build 就行）。
+      # apt / npm / pip 是三条独立的下载路，任一条不通都会卡在那些步骤上。
+      # ⚠️ apt 给 **http://** 的源：这几个站里只有 USTC 既通又快，而 https 的会撞证书校验
+      #    （实测数据写在 Dockerfile 顶部那段）。aliyun / tuna 直接 403，别用。
+      # ⚠️ npm 别默认 npmmirror：实测它只回 74 字节的跳转体，腾讯云那个 545ms 拿到完整包。
+      # args:
+      #   APT_MIRROR: http://mirrors.ustc.edu.cn
+      #   NPM_REGISTRY: https://mirrors.cloud.tencent.com/npm/
+      #   PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      # 出口被限流到 ~110 KB/s 的那台机器上，换源救不了 —— 把本机已有的 pnpm store 挂进来
+      # （需要 compose ≥ 2.17；路径按你机器改，`pnpm store path` 查到的是 **带版本后缀** 的那层）。
+      # contexts:
+      #   store: E:/.pnpm-store/v11
+    image: yanxin:local
+    container_name: yanxin
+    restart: unless-stopped
+    ports:
+      - '3080:3080' # 控制台（http://<这台机>:3080/yanxin/）
+      - '8080:8080' # OneBot 反向 WS（NapCat 连这里）
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY:?在 .env 里填 LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL:?在 .env 里填 LLM_BASE_URL}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:?在 .env 里填一个该网关真实存在的模型 id}
+      YANXIN_SELF_ID: ${YANXIN_SELF_ID:-}
+      YANXIN_ONEBOT_TOKEN: ${YANXIN_ONEBOT_TOKEN:-}
+      YANXIN_CONSOLE_TOKEN: ${YANXIN_CONSOLE_TOKEN:-}
+      # ReMe 的模型走同一把 key：entrypoint 把上面三个值写进 $DSH_HOME/.credentials.yaml，
+      # 并把它们作为进程环境传给 reme（ReMe 自己只看环境变量与 .env，而 .env 不在容器里落盘）。
+    volumes:
+      - yanxin-dsh:/home/node/.dsh
+      - yanxin-reme:/data/reme
+    healthcheck:
+      # 与 Dockerfile 的 HEALTHCHECK 同一条判据：容器内是回环，免凭据只读
+      test: ['CMD', 'curl', '-fsS', '-L', 'http://127.0.0.1:3080/yanxin/']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  yanxin-dsh:
+  yanxin-reme:

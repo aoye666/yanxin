@@ -49,15 +49,15 @@ const CLOSED: WorldStatus = {
 
 describe('A) 管理员页：号码规范化 + 名单渲染', () => {
   const cases: Array<[unknown, string | undefined]> = [
-    ['1000000001', '1000000001'],
-    [' 2000000002 ', '2000000002'],
+    ['2000000001', '2000000001'],
+    [' 3000000001 ', '3000000001'],
     ['', undefined],
     ['   ', undefined],
     ['abc', undefined],
     ['123', undefined], // 太短
     ['1234567890123', undefined], // 13 位：太长
-    ['1000000001\n', '1000000001'],
-    [1000000001, undefined], // 不是字符串：不猜
+    ['2000000001\n', '2000000001'],
+    [2000000001, undefined], // 不是字符串：不猜
     [null, undefined],
   ]
   it.each(cases)('%s → %s', (input, expected) => {
@@ -71,7 +71,7 @@ describe('A) 管理员页：号码规范化 + 名单渲染', () => {
   })
 
   it('非空：表格 + 两个表单（加入 / 移出），action 都带 base', () => {
-    const blocks = renderAdminsBlocks(['1000000001'], BASE)
+    const blocks = renderAdminsBlocks(['2000000001'], BASE)
     const text = JSON.stringify(blocks)
     expect(text).toContain('当前 1 位管理员')
 
@@ -141,8 +141,8 @@ describe('B) 时段页：解析', () => {
 describe('C) 设置页：模型清单 + 校验', () => {
   const llmPiAi = {
     providers: {
-      main: { models: [{ id: 'main-pro' }, { id: 'main-flash' }] },
-      backup: { models: [{ id: 'backup-flash' }] },
+      agnes: { models: [{ id: 'agnes-3.0-flash' }, { id: 'agnes-2.5-pro' }] },
+      suotianyi: { models: [{ id: 'deepseek-flash' }] },
       broken: { models: 'not-an-array' },
       empty: {},
     },
@@ -150,9 +150,9 @@ describe('C) 设置页：模型清单 + 校验', () => {
 
   it('从 llm-pi-ai 里抽出可用路由（形状坏了就跳过，不抛）', () => {
     expect(modelChoices(llmPiAi)).toEqual([
-      { provider: 'main', model: 'main-pro' },
-      { provider: 'main', model: 'main-flash' },
-      { provider: 'backup', model: 'backup-flash' },
+      { provider: 'agnes', model: 'agnes-3.0-flash' },
+      { provider: 'agnes', model: 'agnes-2.5-pro' },
+      { provider: 'suotianyi', model: 'deepseek-flash' },
     ])
     expect(modelChoices(undefined)).toEqual([])
     expect(modelChoices({ providers: 'nope' })).toEqual([])
@@ -160,11 +160,11 @@ describe('C) 设置页：模型清单 + 校验', () => {
 
   it('校验：清单里有才放行', () => {
     const choices = modelChoices(llmPiAi)
-    expect(checkModelRoute({ provider: 'main', model: 'main-pro' }, choices)).toEqual({
+    expect(checkModelRoute({ provider: 'agnes', model: 'agnes-3.0-flash' }, choices)).toEqual({
       ok: true,
-      route: { provider: 'main', model: 'main-pro' },
+      route: { provider: 'agnes', model: 'agnes-3.0-flash' },
     })
-    const bad = checkModelRoute({ provider: 'main', model: 'main-nope' }, choices)
+    const bad = checkModelRoute({ provider: 'agnes', model: 'agnes-9.9' }, choices)
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.reason).toContain('网关里没有这条路由')
 
@@ -177,8 +177,8 @@ describe('C) 设置页：模型清单 + 校验', () => {
   it('页面：命名空间表标出"可改 / 专页 / 只读"，并给出可选路由', () => {
     const blocks = renderSettingsBlocks(
       [
-        { ns: 'agent-default-model', value: { provider: 'main', model: 'main-pro' } },
-        { ns: 'yanxin-admin', value: { admins: ['1000000001'] } },
+        { ns: 'agent-default-model', value: { provider: 'agnes', model: 'agnes-3.0-flash' } },
+        { ns: 'yanxin-admin', value: { admins: ['2000000001'] } },
         { ns: 'yanxin-window', value: { windows: [] } },
         { ns: 'llm-pi-ai', value: { providers: {} } },
       ],
@@ -190,7 +190,7 @@ describe('C) 设置页：模型清单 + 校验', () => {
     expect(text).toContain('管理员页')
     expect(text).toContain('时段页')
     expect(text).toContain('只读')
-    expect(text).toContain('main-pro') // 可选路由表
+    expect(text).toContain('agnes-3.0-flash') // 可选路由表
     const form = blocks.find((block) => block.kind === 'form')
     expect(JSON.stringify(form)).toContain(`${BASE}/api/settings/model`)
   })
@@ -275,7 +275,7 @@ describe('E) 记忆页：健康 + 溯源', () => {
           health: { ok: true },
           query: '光',
           hits: [
-            { content: '下午的光斜进来', source: 'daily/2026-09-27.md', lines: [3, 5], score: 0.82, sessionId: 'world:2000000002' },
+            { content: '下午的光斜进来', source: 'daily/2026-09-27.md', lines: [3, 5], score: 0.82, sessionId: 'world:3000000001' },
           ],
         },
         BASE,
@@ -283,7 +283,7 @@ describe('E) 记忆页：健康 + 溯源', () => {
     )
     expect(withHits).toContain('daily/2026-09-27.md')
     expect(withHits).toContain('3–5')
-    expect(withHits).toContain('world:2000000002')
+    expect(withHits).toContain('world:3000000001')
     expect(withHits).toContain('的结果（1 条）')
 
     const empty = JSON.stringify(renderMemoryBlocks({ health: { ok: true }, query: '不存在的词', hits: [] }, BASE))
@@ -301,7 +301,7 @@ describe('F) 对话页：事件摘要', () => {
       data: {
         message: {
           content: [{ type: 'text', text: '早上好' }],
-          source: { kind: 'qq', mode: 'agent', groupId: '3000000003', userId: '1000000001' },
+          source: { kind: 'qq', mode: 'agent', groupId: '3000000003', userId: '2000000001' },
         },
       },
     })
@@ -315,7 +315,7 @@ describe('F) 对话页：事件摘要', () => {
   it('私聊消息：说"私聊"而不是空群号', () => {
     const row = summarizeEvent({
       type: 'user/message',
-      data: { message: { content: [{ type: 'text', text: '在吗' }], source: { kind: 'qq', mode: 'admin', userId: '1000000001' } } },
+      data: { message: { content: [{ type: 'text', text: '在吗' }], source: { kind: 'qq', mode: 'admin', userId: '2000000001' } } },
     })
     expect(row.text).toContain('私聊')
   })
@@ -346,10 +346,10 @@ describe('G) 对话页：页面形态', () => {
   })
 
   it('有会话：每个会话一个链接（点进去看时间轴）', () => {
-    const blocks = renderTalkBlocks({ sessions: ['admin:1000000001', 'world:2000000002'] }, BASE)
+    const blocks = renderTalkBlocks({ sessions: ['admin:2000000001', 'world:3000000001'] }, BASE)
     const links = blocks.filter((block) => block.kind === 'link')
     expect(links).toHaveLength(2)
-    expect(JSON.stringify(links[0])).toContain(`${BASE}/talk?session=admin%3A1000000001`)
+    expect(JSON.stringify(links[0])).toContain(`${BASE}/talk?session=admin%3A2000000001`)
   })
 
   it('选中会话：时间轴 + 截断时给"显示全部"', () => {

@@ -183,11 +183,11 @@ describe('T24a —— 可见性过滤（属性级）', () => {
     const world = makeWorld()
     world.entities['phone'] = entity('phone', 'object', '手机', 'house', {
       owner: 'bot',
-      attributes: { 通讯录: { value: '主人', visibility: 'owner' } },
+      attributes: { 通讯录: { value: '爸爸', visibility: 'owner' } },
     })
 
     const phone = observe(world, 'bot').observation.entities.find((item) => item.name === '手机')
-    expect(phone?.attributes['通讯录']).toBe('主人')
+    expect(phone?.attributes['通讯录']).toBe('爸爸')
   })
 })
 

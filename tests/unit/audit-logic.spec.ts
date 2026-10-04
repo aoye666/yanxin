@@ -43,11 +43,11 @@ describe('A) redactSecrets：密钥必须被抹掉', () => {
 
 describe('B) redactSecrets：不该误伤的东西', () => {
   const untouched = [
-    'ls -la /home/you/projects/app',
+    'ls -la /e/project/xiaoyan',
     'git commit -m "add token field to the record"', // 有 token 这个词，但没有键值形态
     'grep -n "token=" file.txt', // 键值后面是引号/空，不是值
-    'agent:2000000002:group:3000000003', // 会话 id（审计里必须留着）
-    'admins: ["1000000001"]', // 名单键名不以 key/token/secret/password 结尾
+    'agent:3000000001:group:3000000003', // 会话 id（审计里必须留着）
+    'admins: ["2000000001"]', // 名单键名不以 key/token/secret/password 结尾
     'note.md 记的是 «redacted» 之后的样子', // 已经是占位符，不该再抹一层
   ]
 
@@ -136,17 +136,17 @@ describe('D) classifyCommand：危险等级是打标，不是拦截', () => {
 
 describe('E) parseSessionId：账号是从会话命名解析的（不是权威身份）', () => {
   const table: Array<[string, Record<string, unknown>]> = [
-    ['admin:1000000001', { mode: 'admin', account: '1000000001', channel: 'private' }],
+    ['admin:2000000001', { mode: 'admin', account: '2000000001', channel: 'private' }],
     ['admin:group:3000000003', { mode: 'admin', channel: 'group', groupId: '3000000003' }],
     [
-      'agent:2000000002:group:3000000003',
-      { mode: 'agent', selfId: '2000000002', channel: 'group', groupId: '3000000003' },
+      'agent:3000000001:group:3000000003',
+      { mode: 'agent', selfId: '3000000001', channel: 'group', groupId: '3000000003' },
     ],
     [
-      'agent:2000000002:private:1000000001',
-      { mode: 'agent', selfId: '2000000002', channel: 'private', account: '1000000001' },
+      'agent:3000000001:private:2000000001',
+      { mode: 'agent', selfId: '3000000001', channel: 'private', account: '2000000001' },
     ],
-    ['world:2000000002', { mode: 'world', selfId: '2000000002' }],
+    ['world:3000000001', { mode: 'world', selfId: '3000000001' }],
     // 不认识的形状一律 unknown（不猜）
     ['', { mode: 'unknown' }],
     ['whatever', { mode: 'unknown' }],
@@ -161,20 +161,20 @@ describe('E) parseSessionId：账号是从会话命名解析的（不是权威�
 
   it('与 sessionIdFor 反向锁定：命名约定改了，这里会红', () => {
     // 会话命名是记忆写回的隔离单位（spec §6.5），审计的账号字段只是它的副产品。
-    expect(sessionIdRoundTrip('admin', '2000000002', { kind: 'private', userId: '1000000001' })).toEqual({
+    expect(sessionIdRoundTrip('admin', '3000000001', { kind: 'private', userId: '2000000001' })).toEqual({
       mode: 'admin',
-      account: '1000000001',
+      account: '2000000001',
       channel: 'private',
     })
-    expect(sessionIdRoundTrip('agent', '2000000002', { kind: 'group', groupId: '3000000003' })).toEqual({
+    expect(sessionIdRoundTrip('agent', '3000000001', { kind: 'group', groupId: '3000000003' })).toEqual({
       mode: 'agent',
-      selfId: '2000000002',
+      selfId: '3000000001',
       channel: 'group',
       groupId: '3000000003',
     })
-    expect(sessionIdRoundTrip('world', '2000000002', { kind: 'private', userId: '2000000002' })).toEqual({
+    expect(sessionIdRoundTrip('world', '3000000001', { kind: 'private', userId: '3000000001' })).toEqual({
       mode: 'world',
-      selfId: '2000000002',
+      selfId: '3000000001',
     })
   })
 })
@@ -206,7 +206,7 @@ describe('F) buildShellAuditRecord：spec §6.10 的字段表', () => {
     callId: 'call-1',
     name: 'bash',
     arguments: { command: 'curl -H "Authorization: Bearer FAKEtoken12345" https://x', description: '拉取数据' },
-    agent: { id: 'admin:1000000001' },
+    agent: { id: 'admin:2000000001' },
   }
 
   it('成功执行：字段齐、值对、命令已脱敏', () => {
@@ -230,9 +230,9 @@ describe('F) buildShellAuditRecord：spec §6.10 的字段表', () => {
     // 时间由落盘层加；这里断言的是**取值**部分
     expect(record.tool).toBe('bash')
     expect(record.callId).toBe('call-1')
-    expect(record.session).toBe('admin:1000000001')
+    expect(record.session).toBe('admin:2000000001')
     expect(record.mode).toBe('admin')
-    expect(record.account).toBe('1000000001')
+    expect(record.account).toBe('2000000001')
     expect(record.exitCode).toBe(0)
     expect(record.durationMs).toBe(450)
     expect(record.stdoutBytes).toBe(Buffer.byteLength('中文输出 ok', 'utf8'))
@@ -251,7 +251,7 @@ describe('F) buildShellAuditRecord：spec §6.10 的字段表', () => {
         callId: 'call-m',
         name: 'mcp__srv__run_command',
         arguments: { command: 'rm -rf /tmp/x', workdir: '/tmp' },
-        agent: { id: 'agent:2000000002:group:3000000003' },
+        agent: { id: 'agent:3000000001:group:3000000003' },
       },
       result: { isError: false, value: { exitCode: 0 } },
       finishedAtMs: 2_000,
@@ -265,7 +265,7 @@ describe('F) buildShellAuditRecord：spec §6.10 的字段表', () => {
 
   it('没要求 workdir 时写 null；stdoutBytes 是"带内"字节数（截断后）', () => {
     const record = buildShellAuditRecord({
-      exec: { callId: 'c', name: 'bash', arguments: { command: 'pwd' }, agent: { id: 'admin:1000000001' } },
+      exec: { callId: 'c', name: 'bash', arguments: { command: 'pwd' }, agent: { id: 'admin:2000000001' } },
       result: {
         isError: false,
         value: { exitCode: 0, stdout: { text: '溢出前的那一段', truncated: true, spillPath: '/tmp/spill-1' } },

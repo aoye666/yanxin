@@ -41,7 +41,8 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.2",
-    "ws": "8.21.3"
+    "ws": "8.21.3",
+    "yaml": "2.9.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
@@ -72,7 +73,6 @@
     "lefthook": "^2.1.14",
     "oxlint": "1.76.0",
     "typescript": "5.9.3",
-    "vitest": "4.1.5",
-    "yaml": "2.9.1"
+    "vitest": "4.1.5"
   }
 }

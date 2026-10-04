@@ -197,13 +197,15 @@ export class WorldKernel {
   private submitQueue: Promise<unknown> = Promise.resolve()
   /** 已提交过的幂等键 → 首次提交的序号。 */
   private readonly committedKeys = new Map<string, number>()
+  private readonly dir: string
   private readonly logPath: string
   private readonly options: Required<Pick<KernelOptions, 'now' | 'warn'>> & KernelOptions
 
   private constructor(
-    private readonly dir: string,
+    dir: string,
     options: KernelOptions,
   ) {
+    this.dir = dir
     this.logPath = join(dir, TRANSACTION_LOG)
     this.options = {
       now: options.now ?? (() => Date.now()),
@@ -293,14 +295,19 @@ export class WorldKernel {
     }
 
     const sequence = this.snapshotValue.sequence + 1
-    const effectiveAt = proposal.effectiveAt ?? this.options.now()
+    // ⚠️ 时钟只读**一次**，两个字段共用：提案没带 `effectiveAt` 时它的缺省是"此刻"，
+    //    而重放路径拿的是 `proposal.effectiveAt ?? committedAt`（见 replay 里那行）——
+    //    分两次 `now()` 就让同一个事务"当场"和"重放后"差出 1 毫秒，
+    //    "日志是权威、重放得到逐位等价快照"这条承诺就只在毫秒边界内成立（T20 断言会随机红）。
+    const at = this.options.now()
+    const effectiveAt = proposal.effectiveAt ?? at
     const changedEntityIds = collectChanged(proposal.operations)
     // ⚠️ 事件 id 要在 **append 之前**算出来：日志行里的 `utteranceIds` 是"这次说了什么"
     // 的权威记录，事后补写就得原地改文件（append-only 的纪律不允许）
     const utteranceIds = this.predictUtteranceIds(proposal.operations, sequence)
     const transaction: CommittedTransaction = {
       sequence,
-      committedAt: this.options.now(),
+      committedAt: at,
       proposal: clone(proposal),
       changedEntityIds,
       utteranceIds,
@@ -311,7 +318,7 @@ export class WorldKernel {
     //
     // ⚠️⚠️ 但这个顺序有个前提：**应用阶段不许失败**。它一旦抛错，日志里就留下一条
     // "写进去了、却应用不了"的**毒行**，重放时那条毒行会让整个世界装载失败
-    // （`LOG_CORRUPTED` —— 2026-09-27 夜间隔离实例实测到：网关给过一条少 `changes`
+    // （`LOG_CORRUPTED` —— 2026-09-27 夜间隔离实例实测到：agnes 给过一条少 `changes`
     //  的 update，apply 阶段抛裸 TypeError，日志就此带毒）。
     // 形状校验（①·5）本该覆盖所有能失败的情形；这里是**那之后的一道兜底**：
     // 先在一份克隆上整批试应用，真漏了也宁可在这里失败，而不是污染权威日志。
@@ -387,7 +394,7 @@ export class WorldKernel {
 
     // ①·5 **形状**：模型偶尔漏字段（`{op:'update', id}` 忘了 changes、`{op:'action.start'}` 忘了 action…）。
     // 少了这一遍，应用阶段会抛**裸 TypeError**（"Cannot read properties of undefined (reading 'name')"），
-    // 模型拿到的是一个看不懂的报错而不是可修正的诊断 —— 2026-09-27 夜间隔离实例实测到网关这样做过。
+    // 模型拿到的是一个看不懂的报错而不是可修正的诊断 —— 2026-09-27 夜间隔离实例实测到 agnes 这样做过。
     // 形状不对的操作**不参与后面的引用校验**（否则那些 pass 自己就会踩空）。
     const malformed = new Set<number>()
     proposal.operations.forEach((operation, index) => {

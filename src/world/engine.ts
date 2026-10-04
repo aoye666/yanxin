@@ -14,8 +14,10 @@
  *
  * 启停由窗口服务驱动（T19）：窗口关闭 → 这一行被 dispose → 心跳停、时钟停、订阅断。
  * 所以两件事都要绑 `ctx.effect`，而"异步打开"要额外防一个竞态：
- * **打开还在飞的时候被 dispose**（读盘可能比一次窗口裁决慢）——
- * 那时 `openWorld` 回来发现已经关了，必须自己收摊（否则留下一个没人管的循环在转）。
+ * **打开还在飞的时候收尾**（读盘可能比一次窗口裁决慢）——那时 `openWorld` 回来发现
+ * 本次装载已经作废，必须自己收摊（否则留下一个没人管的循环在转）。判"作废"用**装载代数**
+ * 而不是布尔标志：布尔会被下一次装载复位，于是旧 open 以为自已还活着，和新那轮抢同一个
+ * 会话 id（字段注释在 `generation` 上）。
  *
  * ## 它**不**做的事
  *
@@ -189,8 +191,19 @@ export default class WorldEngine extends Service {
   /** 打开好的世界（还没打开完 / 已关时是 `undefined`）。 */
   private world?: OpenWorld
 
-  /** 被 dispose 过（防"打开还在飞时被关掉"的竞态 —— 见文件头）。 */
-  private disposed = false
+  /**
+   * 装载代数。每次 effect 起一次 open 就 +1，收尾时再 +1 让在飞的那次作废。
+   *
+   * ⚠️ 为什么不是一个布尔 `disposed`：布尔会被**下一次装载**复位成 false，于是一次
+   * 还没跑完的旧 open 在恢复执行时看到"没被关"，把 `this.world` 覆盖成新装载的那份，
+   * 而它自己的循环也在跑 —— 两条生活共用同一个 session id，第二份直接撞
+   * `session "…" already exists`（2026-10-04 线上那 49 次的第二个成因）。
+   * 代数只对"我这次装载还作不作数"负责，复位不了。
+   */
+  private generation = 0
+
+  /** 在飞的 open（收尾要等它落定，否则下一次打开会撞上它还没摘掉的会话）。 */
+  private opening: Promise<void> | undefined
 
   /** 她这段生活的会话句柄收尾（窗口关闭时调，见 lifecycle effect 的清理）。 */
   private lifeDispose: (() => Promise<void>) | undefined
@@ -208,16 +221,19 @@ export default class WorldEngine extends Service {
 
     // 世界生命周期：打开（异步）→ 关闭（同步，且幂等）
     ctx.effect(() => {
-      this.disposed = false
-      void this.open(dir, config).catch((error: unknown) => {
+      const generation = ++this.generation
+      this.opening = this.open(dir, config, generation).catch((error: unknown) => {
         // 打不开就**如实报错**并停在这一状态：不假装在跑（那是"她明明在却什么都没发生"的根源）
         this.ctx.logger.error(`[yanxin-world] 世界装载失败（${dir}）：${describe(error)}`)
       })
-      return () => {
-        this.disposed = true
-        // 先收她这段生活的会话句柄再停世界：句柄是 `open()` 里建起来的，
-        // 不收就随窗口启停每天泄一份（直到进程退出）
-        void this.lifeDispose?.().catch((error: unknown) => {
+      return async () => {
+        ++this.generation
+        // 先等在飞的那次 open 落定（它会看见代数不匹配、自己收摊），再收会话句柄。
+        // 顺序反了或干脆不 await，cordis 就以为作用域拆完了，下一次装载撞上 store 里
+        // 还没摘掉的同 id 条目 —— `session "…" already exists`，那一拍静默丢掉。
+        await this.opening?.catch(() => undefined)
+        this.opening = undefined
+        await this.lifeDispose?.().catch((error: unknown) => {
           this.ctx.logger.warn(`[yanxin-world] 她的会话收尾失败：${describe(error)}`)
         })
         this.lifeDispose = undefined
@@ -333,8 +349,8 @@ export default class WorldEngine extends Service {
     return world
   }
 
-  /** 打开世界（读盘 + 接线）。中途被 dispose 时自己收摊（见文件头）。 */
-  private async open(dir: string, config: EngineConfig): Promise<void> {
+  /** 打开世界（读盘 + 接线）。代数不匹配（被关或被新一轮装载顶掉）时自己收摊。 */
+  private async open(dir: string, config: EngineConfig, generation: number): Promise<void> {
     const selfId = config.selfId ?? ENGINE_DEFAULTS.selfId
     const world = await openWorld({
       dir,
@@ -347,14 +363,15 @@ export default class WorldEngine extends Service {
       warn: (message) => this.ctx.logger.warn(message),
     })
 
-    if (this.disposed) {
-      // 打开期间被关了：**自己收摊**，别留一个没人管的循环在转
+    if (generation !== this.generation) {
+      // 打开期间被关了、或被新一轮装载顶了：**自己收摊**，别留一个没人管的循环在转。
+      // 这里的 await 与 effect 收尾同理 —— 不收完就返回，下一次打开会撞 store。
       world.stop()
-      void this.lifeDispose?.().catch((error: unknown) => {
+      await this.lifeDispose?.().catch((error: unknown) => {
         this.ctx.logger.warn(`[yanxin-world] 她的会话收尾失败：${describe(error)}`)
       })
       this.lifeDispose = undefined
-      this.ctx.logger.warn('[yanxin-world] 打开完成时已被关闭 —— 本次打开作废')
+      this.ctx.logger.warn('[yanxin-world] 打开完成时本次装载已作废 —— 丢弃这次打开')
       return
     }
     this.world = world

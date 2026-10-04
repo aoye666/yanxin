@@ -194,9 +194,11 @@ export default class WindowService extends Service {
 
   /** 裁决的串行队列：timer 与 settings watch 可能同时触发，不让 update 并发。 */
   private queue: Promise<unknown> = Promise.resolve()
+  private readonly config: WindowOptions
 
-  constructor(ctx: Context, private readonly config: WindowOptions = {}) {
+  constructor(ctx: Context, config: WindowOptions = {}) {
     super(ctx, 'window')
+    this.config = config
     this.scope = ctx.settings.register(NAMESPACE, SettingsSchema)
 
     // 定时裁决。裸 setInterval 必须经 ctx.effect 绑生命周期 —— 少了这层，

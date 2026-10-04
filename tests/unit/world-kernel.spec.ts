@@ -139,7 +139,7 @@ describe('T20 —— 校验①：类目合法', () => {
 })
 
 describe('T20 —— 校验①·5：形状（模型漏字段要拿得到可修正的诊断）', () => {
-  // 2026-09-27 夜间隔离实例实测：example-llm 的提案里出现过 `{op:'update', id}` 少了 changes，
+  // 2026-09-27 夜间隔离实例实测：agnes 的提案里出现过 `{op:'update', id}` 少了 changes，
   // 应用阶段于是抛**裸 TypeError**（"Cannot read properties of undefined (reading 'name')"）
   // —— 模型拿到它无从下手。这一组把"该拒的拒得有理由"钉在机读诊断上。
   const table: Array<[string, WorldOperation, string]> = [

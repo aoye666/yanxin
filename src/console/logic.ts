@@ -3,9 +3,12 @@
  *
  * 三件事都不碰网络与文件系统，因此可以表驱动地测：
  *
- *   · **谁在敲门**：只服务回环请求（`isLoopbackAddress`）—— 与"webServer 只绑 127.0.0.1"
+ *   · **谁在敲门**：默认只服务回环请求（`isLoopbackAddress`）—— 与"webServer 只绑 127.0.0.1"
  *     是两道独立的门，因为**绑定地址是 webServer 行的配置**（我们看不到它，也无法断言它），
- *     而这一道由我们自己的代码守，能被测试证伪
+ *     而这一道由我们自己的代码守，能被测试证伪。
+ *     Docker 形态需要远程可达，所以加了**默认关**的显式放行 `YANXIN_CONSOLE_ALLOW_REMOTE=1`
+ *     （{@link remoteAccessAllowed}）—— 它放宽的是安全边界，**开启时服务启动会打 WARN**，
+ *     且写操作仍然一律要 token
  *   · **能不能写**：写操作（非 GET）必须带 `YANXIN_CONSOLE_TOKEN`（`authorize`），
  *     且比对用**定时安全比较** —— 普通 `===` 会按字节提前返回，给暴力猜测留出时间侧信道
  *   · **没配 token 怎么办**：**fail-closed**（一律拒写）。"没配就等于不设防"是最坏的默认
@@ -83,6 +86,33 @@ export interface AuthorizeInput {
   provided: string | undefined
   /** 环境变量里的期望值（没配时 `undefined`）。 */
   expected: string | undefined
+  /**
+   * 请求方是不是回环（调用方用 `isLoopbackAddress` 判好交进来）。
+   *
+   * ⚠️ **必填而不是可选**：这一维放宽的是安全边界，默认值会决定"忘了传"的后果。
+   */
+  loopback: boolean
+  /** 部署有没有显式允许远程访问（{@link remoteAccessAllowed}）。 */
+  allowRemote: boolean
+}
+
+/**
+ * 远程访问开关的环境变量名（**默认关**）。
+ *
+ * 为什么走环境变量而不是 patch / settings：这一档改变的是"谁能连上这台机器的运维界面"，
+ * 属于部署形态；把它做成控制台页面上的开关 = 让被放宽的东西自己决定要不要放宽。
+ */
+export const ALLOW_REMOTE_ENV = 'YANXIN_CONSOLE_ALLOW_REMOTE'
+
+/**
+ * 远程访问有没有被显式打开。**只认 `1` 与 `true`**（大小写与首尾空白无所谓）。
+ *
+ * `yes` / `on` / `TRUSTED` 都算没开：写错的人看到的是"我设了却没生效"，
+ * 而如果反过来认（任何非空都算开），看到的是"我以为没开结果开了" —— 后一种才不能接受。
+ */
+export function remoteAccessAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  const value = env[ALLOW_REMOTE_ENV]?.trim().toLowerCase()
+  return value === '1' || value === 'true'
 }
 
 export type AuthorizeVerdict =
@@ -92,14 +122,23 @@ export type AuthorizeVerdict =
 /**
  * 这次请求能不能过。
  *
- * 顺序是刻意的：**先判这次要不要凭据**（普通只读连 token 都不看），再判配没配，最后才比对。
- * 三种拒绝态各自有明确的原因字符串（审计日志与响应体都用它）：
+ * 顺序是刻意的：**先看在哪儿敲门**（非回环且没开远程 = 一律 403，连 token 都不看），
+ * 再判这次要不要凭据（回环内的普通只读连 token 都不看），再判配没配，最后才比对。
+ * 四种拒绝态各自有明确的原因字符串（审计日志与响应体都用它）：
+ *   · 非回环 + 没开远程 → 403
  *   · 免凭据的读操作 → 放行
  *   · 要凭据 + 没配 token → 403（fail-closed，"服务器没配 token，一律拒绝"）
- *   · 要凭据 + 没带 token → 401
- *   · 要凭据 + token 不对 → 401
+ *   · 要凭据 + 没带 / 带错 token → 401
  */
 export function authorize(input: AuthorizeInput): AuthorizeVerdict {
+  if (!input.loopback && !input.allowRemote) {
+    return {
+      allowed: false,
+      status: 403,
+      reason: `只有本机能访问控制台 —— 要远程访问请显式设 ${ALLOW_REMOTE_ENV}=1`,
+    }
+  }
+
   if (!requiresToken(input.method, input.path)) return { allowed: true }
 
   if (input.expected === undefined || input.expected === '') {
@@ -212,9 +251,11 @@ export type Block =
         label: string
         /**
          * `hidden` 不给标签（值由页填好，运营者看不见也不用填）；
-         * `checkbox` 提交 `'true'` / `'false'`。
+         * `checkbox` 提交 `'true'` / `'false'`；
+         * `textarea` 是多行（人格这种"一整篇文本"用它 —— 浏览器端建 `<textarea>` 并把
+         * `value` 赋给 `.value`，**不走 `innerHTML`**，所以内容里的标记只会显示成文字）。
          */
-        type?: 'text' | 'password' | 'hidden' | 'checkbox'
+        type?: 'text' | 'password' | 'hidden' | 'checkbox' | 'textarea'
         value?: string
         hint?: string
       }[]

@@ -2,20 +2,8 @@
 
 > Bot 名：**小研**　|　Harness 名：**研心 / YanXin**
 > 形态：**一个 DeepSeek Harness 的 profile + bundle**
-> 状态：**beta**（聊天线与世界线都上线过；控制台八页；见 §10 与文末检查表）
-
-## 读这份文档前（公开包说明）
-
-- 本文由开发副本同步而来，**保留了作者的决策过程与未闭环事项**。文中出现的
-  `ADR 00xx`（`docs/decisions/`）与 `T12` 这类任务号（`tasks/`）**在本包里指不到文件** ——
-  那两处不在公开范围内，它们的结论都已经写进本文（尤其附录 A「被证伪的初始假设」）。
-- 示例值都是**占位**：QQ 号 `1000000001` / `2000000002` / `3000000003`、
-  路由 `example-llm` / `example-model`、网关 `api.example.com`。真实值属于部署层，
-  在本仓之外（`$DSH_HOME/profiles/<名字>/cordis.patch.yml`，见 §5.2）。
-- `persona/` 出厂是**空模板**（结构与纪律齐、人格内容留空），所以 §6.4 与附录里引用的
-  那些人格原话在本文档里也可能已不存在——它们属于使用者自己要写的那部分。
-- §11 的 **R1–R8** 是作者在 2026-10-02 复核时留下的未闭环项，其中几条（轮换 key、
-  本机 `cwd` 验证）是**运维事项**而非代码缺陷；不影响部署，影响的是"这条 spec 不能自称全部验收"。
+> 状态：Phase 1 (Specify) — 第 5 稿（地基已定，等待人工评审）
+> 日期：2026-09-25
 
 ---
 
@@ -144,51 +132,35 @@
 ## 4. Commands
 
 ```bash
-# ── 一次性：装运行时（本仓按这一版写的）
-pnpm add -g @deepseek-ai/dsh@0.1.5-rc.3        # 公开 npm 包，不需要 clone monorepo
-
-# ── 依赖 + 构建（⚠️ DSH 加载 lib/，改了 src/ 不 build 等于没改）
+# ── 依赖（精确版本，禁用 ^ ~ latest）
 pnpm install
-pnpm build
 
-# ── 部署：建 profile + 写部署配置 + 建工作目录（幂等，可反复跑）
-node scripts/install.mjs --self-id <她的 QQ 号>
-node scripts/install.mjs --help                # 全部开关；加 --dry-run 只看不动
-#   ↑ 它写的是 $DSH_HOME/profiles/yanxin/cordis.patch.yml（模板：deploy/profile.example.cordis.patch.yml）
-#     那一层装着 token 与本机路径，**不入库**；手写也行，但 onebot.port 是必填，缺了启动即校验失败
-
-# ── 密钥与凭据（这两件脚本不代做）
-#   LLM key → $DSH_HOME/.credentials.yaml（扁平格式，键名 = 环境变量名；别内联进 YAML）
-export YANXIN_CONSOLE_TOKEN='<你自己设一个串>'   # 没配 = 写操作与日志流一律 403（fail-closed）
-
-# ── 启动
-dsh --profile yanxin
-# 浏览器开 http://127.0.0.1:3080/yanxin/setup —— 人格 → 背景 → 创世 → 绑号
-# ⚠️ 启动日志里那句「控制台挂载在 /yanxin」是**无条件打印**的，不代表已初始化；
-#    未 ready 时桥会拦住 agent（src/setup/guard.ts），向导才是入口
-
-# ── 调试装配
-dsh --profile yanxin --dump-config             # ⚠️ 会**明文打印**内联密钥，别把输出贴到任何公开地方
+# ── 开发（bundle 本地 link 进 profile）
+dsh plugin --profile yanxin add ./            # 把当前 bundle 链进 profile
+dsh --profile yanxin --dump-config            # 打印合成后的装配树
+dsh --profile yanxin                          # 启动（headless 形态）
+dsh web --profile yanxin --port 3080          # 带 DSH 控制台启动
 
 # ── 质量
 pnpm typecheck        # tsc --noEmit
-pnpm lint             # oxlint
-pnpm test             # vitest run（59 个 spec；两处依赖本机环境，见 AGENTS.md）
-pnpm build            # tsc -p tsconfig.build.json → lib/
-pnpm presets          # 从 persona/ 重新生成三个 preset
+pnpm lint             # oxlint（对齐 DSH 上游；1 个依赖，见 ADR 0006）
+pnpm test             # vitest run
+pnpm test:watch
+pnpm build            # tsc + 客户端资源
 
-# ── 记忆服务（可选，独立 Python 进程，只绑回环）
-reme start workspace_dir="$HOME/.dsh/yanxin/reme" service.host=127.0.0.1 service.port=2333
-# ⚠️ 必须 cd 到 .env 所在子树再启动（reme start 不读 .env，是它内部的 load_env 按 cwd 找）；
-#    装不上就把 settings 的 yanxin-memory.provider 设成 none —— 记忆整条降级为空，其它照常
+# ── 初始化向导（首跑）
+dsh --profile yanxin              # 检测到未初始化 → 打印 /yanxin 地址与初始化提示
 
-# ── QQ 通道（可选）：NapCat / SnowLuma 建一条反向 WS
-#    URL ws://127.0.0.1:8080/onebot/v11   +   鉴权 Token = profile patch 里的 onebot.token
-#    多号就在 profile patch 的 accounts[] 下多加几行（未注册的 selfId 会被拒 403）
+# ── 记忆服务（独立终端，Python 侧，仅绑回环）
+reme start workspace_dir="$(dsh --profile yanxin --print-home 2>/dev/null || echo ~/.dsh)/yanxin/reme" \
+           service.host=127.0.0.1 service.port=2333
+
+# ── 协议端（两个 NapCat 实例，各一个 QQ 号）
+# napcat --qq <QQ_A>  → 反向 WS: ws://127.0.0.1:8080/onebot/agent
+# napcat --qq <QQ_B>  → 反向 WS: ws://127.0.0.1:8080/onebot/world
 ```
 
-> 单账号即可跑通：群聊与管理员私聊按场景切换 preset（§6.3、§6.5）。历史上的"双账号物理隔离"方案已退役。
-
+> `--print-home` 不是真实 flag（仅示意取 `$DSH_HOME`）；实际用 `$DSH_HOME` 环境变量或 `~/.dsh`。
 
 ---
 
@@ -198,41 +170,50 @@ reme start workspace_dir="$HOME/.dsh/yanxin/reme" service.host=127.0.0.1 service
 
 ```
 yanxin/
-├── package.json              # name: yanxin；"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
-├── cordis.patch.yml          # bundle 层 patch：插入我们的插件行、覆盖平台门、host 平面 disable 清单
+├── package.json              # name: dsh-yanxin；"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+├── cordis.patch.yml          # bundle 层 patch：插入我们的插件行、覆盖平台门
 ├── src/
-│   ├── net/                  # url-guard —— 出网 SSRF 守卫（§7.4-A）
-│   ├── onebot/               # OneBot v11 适配（DSH 无 IM 概念，全自建，只依赖 ws）
-│   │   ├── service.ts        # ctx.onebot —— 反向 WS 服务端 + 账号注册表
-│   │   ├── transport.ts      # 传输参数的三级回退 + 控制台写入门（非回环要 token + 确认）
-│   │   ├── protocol.ts       # 握手头 / 帧分类 / API 帧构造（纯函数层）
-│   │   ├── bridge.ts         # 消息 → agent.followup → 读事件 → 回发（§6.5）
-│   │   ├── session-trigger.ts# 群聊触发三档 mention/name/never + 最近上下文（§6.5）
-│   │   └── provenance.ts     # MessageSource augment：溯源落进 session（§6.13）
-│   ├── memory/               # MemoryService 抽象 + ReMe provider（§6.9）
+│   ├── memory/               # MemoryService 抽象 + ReMe provider
 │   │   ├── service.ts        # ctx.memory —— 契约（search/record/consolidate/health）
-│   │   ├── reme.ts           # ReMe HTTP client（POST /<job>，净化 session id）
-│   │   └── outbox.ts         # 写回缓冲（ReMe 挂了不丢记忆）
+│   │   └── reme.ts           # ReMe HTTP client（POST /<job>）
+│   ├── onebot/               # OneBot 适配（DSH 无 IM 概念，全自建）
+│   │   ├── service.ts        # ctx.onebot —— 反向 WS 服务端 + 账号注册表
+│   │   ├── account.ts        # 单账号连接：握手 / 心跳 / 重连
+│   │   ├── message.ts        # array/string 归一化
+│   │   ├── session-api.ts    # 跨版本读 session 事件（ADR 0011）
+│   │   └── bridge.ts         # 消息 → agent.followup → 读事件 → 回发（§6.5）
 │   ├── world/                # 世界引擎（§6.7：模型提案 → 内核校验 → 原子提交）
-│   │   ├── kernel.ts         # 内核：四校验 / 幂等 / 乐观并发 / 原子提交 / 重放恢复
-│   │   ├── clock.ts          # TU 推进 + Tingle 心跳 + 离线补偿（只补一次）
+│   │   ├── state.ts          # 世界模型类型：实体 / 属性可见性 / 事务 / 观测
+│   │   ├── kernel.ts         # 内核：校验 / 幂等 / 乐观并发 / 原子提交 / 重放恢复
+│   │   ├── observe.ts        # 观测投影：她在哪儿、那儿能感知什么（句柄而非内部 id）
+│   │   ├── clock.ts          # TU 推进 + Tingle 心跳 + 离线补偿
+│   │   ├── runtime.ts        # 行动运行时：定时行动 + 提案处理
+│   │   ├── bot-loop.ts       # Bot-LLM：连续生成 tool call（不等待结果）
 │   │   ├── arbiter.ts        # World-LLM：到期裁定 + 提案（propose_world）
 │   │   └── outbox.ts         # 发射闸门 + 回执（§6.8）
 │   ├── window/               # 窗口调度（自写 timer 插件，§6.6）
-│   ├── admin/                # 管理员名单 + shell 能力门 + shell 审计挂载（§6.10）
-│   ├── audit/                # 审计的唯一出口：落盘 / 脱敏 / 危险等级 / shell 记录构造（§7.4-D）
-│   ├── setup/                # 初始化状态机 persona→background→world→accounts→ready（§6.11）
-│   └── console/              # /yanxin 八页 + HTTP 路由 + SSE 日志流（§6.12）
-├── presets/                  # 三个 agent preset —— ⚠️ **生成产物**，由 build-presets.mjs 出
-│   ├── xiaoyan-agent/        # 群聊 / 非管理员私聊：人格 + 网页工具，无 shell
-│   ├── xiaoyan-admin/        # 管理员私聊：上一行 + shell + fs + subagent…（15 行）
-│   └── xiaoyan-world/        # World 模式：世界姿态 + 世界工具，无 shell
-├── persona/                  # 人格**源文件**（单一来源）：base.md / profile.md / world.md
-│                             #   ⚠️ 本包出厂是空模板；改完跑 `pnpm presets`
-├── deploy/                   # profile.example.cordis.patch.yml —— 部署层模板（install.mjs 的原料）
-├── scripts/                  # install.mjs（部署）、build-presets.mjs（生成 preset）
-├── tests/{unit,integration,support}/   # 59 个 spec；support 里接管 $DSH_HOME
-└── docs/spec.md              # 本文件（ADR 与任务清单不在本包，见文首说明）
+│   ├── admin/                # 管理员名单 + shell 能力门（§6.10）
+│   ├── setup/                # 初始化流程状态机（§6.11）
+│   └── console/              # /yanxin 页面 + HTTP 路由（§6.12）
+├── presets/                  # 模板，由 setup 安装到 $DSH_HOME/.agent-presets/
+│   ├── xiaoyan-agent/        # 群聊脚手架（Phase 5 前顶着；完成后群聊归 world）
+│   │   ├── agent.cordis.yml
+│   │   └── preset.yml
+│   ├── xiaoyan-admin/        # Agent 模式落地：管理员私聊，全能力（bash + fs + todo + subagent…）
+│   │   ├── agent.cordis.yml
+│   │   └── preset.yml
+│   └── xiaoyan-world/        # World 模式落地：群聊姿态 + 主动性（Phase 5 接引擎）
+│       ├── agent.cordis.yml
+│       └── preset.yml
+├── templates/                # setup 向导用的初始文本模板
+│   ├── persona-base.md
+│   ├── persona-profile.md
+│   ├── world-definition.md
+│   └── bot-definition.md
+├── docs/
+│   ├── spec.md               # 本文件
+│   └── decisions/            # ADR
+└── tasks/{plan.md,todo.md}
 ```
 
 ### 5.2 运行时数据（**不在仓库内**）
@@ -607,7 +588,7 @@ export interface MemoryHit {
 > 实测结果：群聊 **2 个**工具（`web_fetch`、`web_search`），管理员私聊 **3 个**（+ `bash`）。
 >
 > **验收方式也跟着改了**：只读 preset 文件证明不了运行时能力（那正是失效的根源）。
-> 权威证据是 `request/header.tools`（本仓的取证断言在 `tests/unit/preset-capabilities.spec.ts`），
+> 权威证据是 `request/header.tools`（取证工具 `spike/extract-tools.mjs`），
 > 而 `tests/unit/preset-capabilities.spec.ts` 新增了一组 **host 平面护栏**看着这件事。
 
 **为什么不能按"发言者 id"直接判定**：DSH 的 guard 拿不到发起者身份。`ToolExecution` 只有 `callId` / `name` / `arguments` / `agent` / `signal`；`Agent` 只有 `id: SessionId` / `options` / `session` / `inbox` / `status` / `ctx`。官方注释也确认 guard 只收到 "the identity-protected call"，而全仓库不存在 `RuntimeContext` 或任何 principal/credential/account 字段。
@@ -651,9 +632,7 @@ export interface MemoryHit {
 即**profile patch 没配 `cwd` 时，命令跑在进程当前目录**。§7.4-B 据此改写。
 
 
-**前提**：DSH 必须在 **Git Bash 中启动**，否则 `bash` 可能不在 PATH 上。开发机上 Git 装在**非系统盘**，
-`C:\Program Files\Git\bin\bash.exe` 这条"标准路径"并不存在 —— 所以任何探测逻辑都**不得硬编码盘符**。
-这一点必须写进启动脚本与 README。
+**前提**：DSH 必须在 **Git Bash 中启动**，否则 `bash` 可能不在 PATH 上。本机 Git 装在 **D 盘**（`D:\Program Files\Git\usr\bin\bash.exe`；`C:\Program Files\Git\bin\bash.exe` 不存在），任何探测逻辑都**不得硬编码 C 盘**。这一点必须写进启动脚本与 README。
 
 **Tier 2（Tier 1 失败则执行）**——自建 `@yanxin/shell-gitbash`，实现 `@deepseek-ai/dsh-shell` 的 `ShellExecutor` 接缝，**以 `dsh-pwsh-local` 为模板**（它是同一个 seam 的 Windows 实现，自述为 bash-local 的 "call-for-call mirror"）：
 
@@ -662,7 +641,7 @@ protected argv(spec: ShellExecSpec): string[] {
   return [this.bashPath, '-c', spec.command]
 }
 // bashPath 由 resolveBashPath(configured, env, platform) 纯函数解析：
-//   显式配置 → 环境变量 → 各平台的 Git 安装位置（**不假设盘符**）→ PATH → 裸 'bash'
+//   显式配置 → D:\Program Files\Git\bin\bash.exe → usr\bin\bash.exe → PATH → 裸 'bash'
 ```
 
 Tier 2 免费继承 bounded output / spill 文件 / timeout 与 cancel 分类 / tree-kill / `ctx.jobs` 集成。注意 `ctx.shell` **只能有一个 provider**（"mounting both fails loud on a duplicate service registration"），所以 Tier 2 是**替换**而非并存。
@@ -671,8 +650,7 @@ Tier 2 免费继承 bounded output / spill 文件 / timeout 与 cancel 分类 / 
 
 **✅ Tier 1 已实测通过（ADR 0009）**：`tests/integration/shell-tier1.spec.ts` 11 条断言全过（bash 解析 / `$BASH_VERSION` + `uname -s` 证明是 bash 而非 cmd / stdout-stderr 分离 / 非零退出码 / 超时与 abort 分类 / workdir / 超大输出截断 + spill）。**Tier 2（T5b）因此降为"仅在上游升级导致回归时启用"。**
 
-**运行前提（硬约束）**：Tier 1 依赖 `bash` 在 PATH 上 —— **DSH 必须在 Git Bash 中启动**。
-开发机上 Git 装在非系统盘，所以探测逻辑**不得硬编码盘符**。测试里已把这条做成**显式诊断**（首条断言即 `command -v bash`）。
+**运行前提（硬约束）**：Tier 1 依赖 `bash` 在 PATH 上 —— **DSH 必须在 Git Bash 中启动**。本机 Git 装在 **D 盘**（`D:\Program Files\Git\usr\bin\bash.exe`），任何探测逻辑不得硬编码盘符。测试里已把这条做成**显式诊断**（首条断言即 `command -v bash`）。
 
 **⚠️ `ctx.shell` 的 API 是两步（实测发现，写代码时容易错）**：
 
@@ -751,7 +729,7 @@ register(route: WebRoute): () => void
 | 记忆 | 检索 + 结果浏览（含溯源 session） | `ctx.memory.search()` |
 | 对话 | 会话列表 + 事件时间轴（调试用） | `ctx.sessions` |
 | 日志 | 实例运行日志的**实时流**（SSE；打开补尾部，之后增量推送） | 系统临时目录下最新的 `yanxin*.log`（行 config `logFile` 可钉死） |
-| OneBot 连接 | 监听地址 / 端口 / access token / 升级路径 / 心跳与调用超时，**改了不用重启**；账号注册表只读 | `ctx.settings`（`yanxin-onebot`，三级回退见 §7.4-A 的"豁免范围"）+ `ctx.onebot.listenPoint` |
+| OneBot 连接 | 监听地址 / 端口 / access token / 升级路径 / 心跳与调用超时，**改了不用重启**；账号注册表只读 | `ctx.settings`（`yanxin-onebot`，三级回退见 ADR 0023）+ `ctx.onebot.listenPoint` |
 | 初始化 | 向导（§6.11） | `ctx.setup` |
 
 **导航是左侧垂直标签栏**（2026-10-02），当前页 `aria-current` 高亮；当前页的判定来自
@@ -1017,18 +995,13 @@ packages/web/web-fetch-http/src/policy.ts:18
 
 **豁免范围（明确界定）**：由**运营者写定**的基础设施端点——ReMe `endpoint`、LLM `baseURL`——不是用户输入，**不受本守卫约束**，但必须：只绑回环、在控制台明文标注、且不允许被 LLM 通过工具参数改写。
 
-⚠️ **OneBot 反向 WS 是这一条里唯一"运营者可以改绑定"的例外**：它的 `host`/`port`/`path`/`token`
-提到 settings 的 `yanxin-onebot`（取值顺序 settings → 行 config → 代码默认），控制台 OneBot 连接页能改，
-**不用重启**。"只绑回环"因此从一句静态纪律变成一个**运行期门**
-（`src/onebot/transport.ts` 的 `validateTransportInput`，**服务端判据**，浏览器提示不算门）：
+⚠️ **OneBot 反向 WS 是这一条里唯一"运营者可以改绑定"的例外**（ADR 0023）：它的 `host`/`port`/`token` 已经提到 settings，控制台 OneBot 连接页能改，**不用重启**。
+"只绑回环"因此从一句静态纪律变成一个**运行期门**（`src/onebot/transport.ts` 的 `validateTransportInput`，**服务端判据**，浏览器提示不算门）：
 
 1. **确认门** —— 改成非回环（`0.0.0.0` / `::` / 网卡 IPv4）必须带 `confirm_public=true`。
-2. **凭据门** —— 非回环时**必须有 token**。这个端口没有别的东西在守：token 一空，任何能连上它的人都能
-   **冒充她的客户端**（推假事件、拿到回发目标），而本条守卫管不到那条路（它只管 harness 自己发起的请求）。
+2. **凭据门** —— 非回环时**必须有 token**。这个端口没有别的东西在守：token 一空，任何能连上它的人都能**冒充她的客户端**（推假事件、拿到回发目标），而本条守卫管不到那条路（它只管 harness 自己发起的请求）。
 
-认不出的地址一律**按对外处理**（fail-closed）；收紧方向（改回回环）不设卡 —— 单向摩擦是故意的，
-两头都拦人会绕去改文件。换绑的实现选**先听新的、再关旧的**：端口被占是最常见的失败，
-反过来做会落得"旧的关了、新的起不来"，而她连不上、控制台也看不出发生了什么。
+认不出的地址一律**按对外处理**（fail-closed）；收紧方向（改回回环）不设卡 —— 单向摩擦是故意的，两头都拦人会绕去改文件。
 `accounts`（selfId → preset）**不在这一层**：那是能力构成，仍然只在 profile patch 里，本页只读显示。
 
 **B. shell（用户已确认：仅管理员可运行 + 危险命令只审计不确认）**
@@ -1076,9 +1049,9 @@ packages/web/web-fetch-http/src/policy.ts:18
 - ⚠️ **约束机器仍然挂着，只是对我们失效**：base 的 `sandbox`（`:169`）、`sandbox-policy`（`:172-176`，`mode: DSH_PERMISSION_MODE ?? 'workspace-write'`、`workspaceRoot: process.cwd()`）、`fs-sandbox`（`:443`）、`approval`（`:188-191`，`policy: 'ask'`）**全部 enabled**，而我们禁用的恰好是唯一会去执法的那行 `permission`（理由见 `cordis.patch.yml:322-336`：非沙箱执行器下它拒绝加载）。**spec 与 README 都不能给读者"有某层沙箱在起作用"的印象。**
 - **能跑 ≠ 安全。**
 
-**README 落实核验（这条是 §7.4-C 自己要求的，2026-10-02 已核，同日随 README 精简改指路）**：README 的「安全须知」条目给出了同一结论的**摘要**（shell 是本机任意代码执行、没有沙箱、URL 守卫管不到 shell 的出网、要接不可信输入必须先迁容器/进程沙箱）；逐条落地情况与残留风险挪到了 `docs/development-notes.md` 第 6–8 节（那里也写明"无沙箱是平台条件性质"与"settings 页仍免凭据"）。**这条 spec 的自述是真的**，只有上面那句"直接 `disabled: true`"要改。
+**README 与 ADR 落实核验（这条是 §7.4-C 自己要求的，2026-10-02 已核，同日随 README 精简改指路）**：README 的「安全须知」给出同一结论的**摘要**（shell 是本机任意代码执行、没有沙箱、URL 守卫管不到 shell 的出网、要接不可信输入必须先迁容器/进程沙箱）；逐条落地情况挪到 `docs/development-notes.md` 第 6 节，同一声明也在 ADR 0009 内。**这一条 spec 的自述是真的**，只有上面那句"直接 `disabled: true`"要改。
 
-**运行前提（硬约束）**：Tier 1 依赖 `bash` 在 PATH 上，即 **DSH 必须在 Git Bash 中启动**（探测逻辑不得硬编码盘符）。已做成显式诊断 —— `tests/integration/shell-tier1.spec.ts` 第一条断言即检查 `command -v bash`，失败信息直接说明是环境问题及两条出路。
+**运行前提（硬约束）**：Tier 1 依赖 `bash` 在 PATH 上，即 **DSH 必须在 Git Bash 中启动**（本机 Git 装在 D 盘，探测逻辑不得硬编码盘符）。已做成显式诊断 —— `tests/integration/shell-tier1.spec.ts` 第一条断言即检查 `command -v bash`，失败信息直接说明是环境问题及两条出路。
 
 **D. 密钥与凭据**
 - 配置只引用环境变量（DSH 的 `apiKeyEnv` credential 引用机制）；QQ 凭证、OneBot token、LLM key、`YANXIN_CONSOLE_TOKEN` 一律不入库、不进日志。
@@ -1103,9 +1076,8 @@ packages/web/web-fetch-http/src/policy.ts:18
 | 非回环请求 | ✅ 双道门 | config 把 `host` 钉在 `127.0.0.1`（`cordis.patch.yml:32`）**加**运行期 `isLoopbackAddress` 拒非回环（`index.ts:222`）。⚠️ 措辞要准：**DSH 侧 `host` 没有代码默认值**（必填 union `127.0.0.1 \| 0.0.0.0`），所以"默认只绑回环"讲的是**我们的 config + 我们自己的门禁**，不是上游默认。 |
 
 **仓库侧密钥核查（2026-10-02）**：`git ls-files` 全量扫 `tvly-` / `sk-` / 内联 `apiKey:` / `token:` → **只有测试里的 FAKE 值**；
-`spike/` 已被 `.gitignore:11` 挡住，**没有密钥进过版本库**（本包也不含 `spike/`）。
-❗开发期间确有一个第三方 MCP key 因内联在 YAML 里而**泄漏进会话记录**（就是上面那条硬约束的由来）。
-它属于作者的运维事项，与本包的读者无关；**你要记住的是同一条纪律：任何密钥都不要内联进 YAML**。
+`spike/` 已被 `.gitignore:11` 挡住，**没有密钥进过版本库**。
+❗但**磁盘上那份还在**：`spike/llm-test.txt` 里现存一个真实 `tvly-` key（未入库、但明文在本地）。上面"建议轮换"这条**至今未做**，且它已泄漏进会话记录 —— 轮换只能由你在 Tavily 侧操作。
 
 ---
 
@@ -1141,7 +1113,7 @@ packages/web/web-fetch-http/src/policy.ts:18
 | T16 | patch 语义 | 一个"只改 config 单键"的恶意 patch **会**整字段覆盖（回归测试，防止后来者误以为可深度合并）。**✅ 已覆盖**：`tests/unit/patch-semantics.spec.ts`（6 条，直接对 DSH 的 `applyEntryPatches` 断言 —— 官方称它是 "THE patch semantics"，与 `--dump-config` 共用同一实现） |
 | T17 | setup 状态机 | 未 `ready` 时 Agent 模式拒绝启动；中途关闭可续；`ready` 后可回退任意步骤重跑 |
 | T18 | 副作用纪律 | 静态检查：`src/` 下无"注册监听却不返回反注册闭包"的写法；`ctx.webServer.register` 必须在 `ctx.effect` 内 |
-| T43 | OneBot 传输参数热改（§7.4-A 的例外） | **✅ 已覆盖**（56 条，三段各管一件事）：<br>· `tests/unit/onebot-transport.spec.ts`（38）—— 三级回退的顺序（行 config 不能被静默忽略）、`isPublicBindHost` 对认不出的地址**按对外处理**、两道门的四种组合、字段形态、**拒绝理由里不带 token 值**<br>· `tests/integration/onebot-transport.spec.ts`（7）—— 换 token 后旧 token 立刻 401；换端口时**已连上的那条不断且仍可调用**；⭐ **端口被占 → 保持原监听在听**（不是两手空空）；地址写错不炸；**请求值没变就不换绑**<br>· `tests/integration/console-onebot-page.spec.ts`（11）—— 门在**服务端**（curl 绕不过）、token 不出现在页面 / 回执 / 审计日志三处、一张表单不许越界改另一张的字段、服务不在时没有写入口 |
+| T43 | OneBot 传输参数热改（ADR 0023） | **✅ 已覆盖**（56 条）。三段各管一件事：<br>· `tests/unit/onebot-transport.spec.ts`（38）—— 三级回退的顺序（settings 赢、行 config 不被静默忽略）、`isPublicBindHost` 对认不出的地址**按对外处理**（fail-closed）、两道门的四种组合、字段形态、**拒绝理由里不带 token 值**<br>· `tests/integration/onebot-transport.spec.ts`（7）—— 换 token 后旧 token 立刻 401；换端口时**已连上的那条不断且仍可调用**；⭐ **端口被占 → 保持原监听在听**（不是两手空空）；地址写错不炸；**请求值没变就不换绑**（端口不会一直变）<br>· `tests/integration/console-onebot-page.spec.ts`（11）—— 门在**服务端**（curl 绕不过）、token 不出现在页面 / 回执 / 审计日志三处、一张表单不许越界改另一张的字段、服务不在时没有写入口 |
 
 ---
 
@@ -1191,7 +1163,7 @@ packages/web/web-fetch-http/src/policy.ts:18
 7. Agent 模式完成"收到群消息 → 召回记忆 → 回复"闭环；管理员私聊完成"调 shell → 审计留痕"闭环（T12）。
 8. World 模式完成"Tingle 心跳 → Bot-LLM 生成 act/wait/rest → 结果按 duration 在世界时刻注入 → World-LLM 裁定并写 News"闭环；对外消息**全部经 outbox**，提交前零发射（T8）。
 9. 跨模式记忆互通：World 写下的经历，Agent 白天能召回到并可溯源（T14）；ReMe 挂掉时 Agent 照常工作（T13）。
-10. `/yanxin` 控制台可用：**九个页面**（初始化 / 管理员 / 时段 / 设置 / 世界 / 记忆 / 对话 / 日志 / OneBot 连接）+ 挂载根本身的仪表盘；插件卸载后路由正确回滚（T15）。
+10. `/yanxin` 控制台可用：设置 / 管理员 / 时段 / 世界 / 记忆 / 对话 / 初始化七个页面；插件卸载后路由正确回滚（T15）。
 11. 初始化向导能从零走完并落盘；未 `ready` 时 Agent 模式拒绝启动（T17）。
 12. URL 守卫对回环/私有/保留地址全部拒绝（T9）。⚠️ ~~内网重定向~~ —— **这一条从验收标准里划掉**：起始 URL 之外的跳转不在我们那一层（§7.4-A"重定向的真实归属"）。可达的替代验收是"patch 里确实写了 `maxRedirects: 3` + provider 只跟同源"。
 13. 代码中不存在 `ctx.start` / `ctx.stop` / `ctx.dispose` / `ctx.fork`，也不存在"以为 patch 能深度合并"的写法（T5、T16、T18）。
@@ -1212,31 +1184,31 @@ packages/web/web-fetch-http/src/policy.ts:18
 | World 时段 | 默认**下午 4 小时（14:00–18:00）**，控制台可改 |
 | TU | 同步真实时间，`1 TU = 1 现实秒`；离线只补一次 tick |
 | LLM | OpenAI 兼容 + function calling；World 用 `tool_choice: 'required'` 替代 GBNF |
-| **LLM 具体** | provider 路由 **`example-llm`**（`https://api.example.com/v1`，OpenAI 兼容），模型 **`example-model`**（实测无 reasoning 开销、function calling 可用）；**路由必须落在 `settings.yaml`** 而非 bundle patch（ADR 0004） |
+| **LLM 具体** | provider 路由 **`suotianyi`**（`https://api.suotianyi.top/v1`，OpenAI 兼容），模型 **`deepseek-flash`**（实测无 reasoning 开销、function calling 可用）；**路由必须落在 `settings.yaml`** 而非 bundle patch（ADR 0004） |
 | 记忆 | 抽象 `MemoryService`，先接 ReMe（外部 HTTP，不内嵌） |
 | shell | **仅管理员可运行**，靠 preset 能力隔离（管理员私聊专用会话）；危险命令**只审计不确认** |
 | Windows shell | **两级策略**（ADR 0001）：Tier 1 零代码启用 DSH 现成 `dsh-bash-local`（前提：DSH 须在 Git Bash 中启动）；Tier 2 若失败则按 `ShellExecutor` 接缝自建 `@yanxin/shell-gitbash`（模板：`dsh-pwsh-local`） |
 | 控制台 | `ctx.webServer` 自建 `/yanxin` 页面（全功能七页）；不 fork 上游、不碰 apiproxy 白名单 |
 | 初始化 | `setup` 服务（状态机）+ Web 向导 |
 | 命名 | Bot = **小研**；Harness = **研心 / YanXin** |
-| **QQ 号** | 小研机器号 `2000000002`；**`ADMIN_QQ = 1000000001`**（唯一可信者 owner） |
+| **QQ 号** | 小研机器号 `3000000001`；**`ADMIN_QQ = 2000000001`**（唯一可信者 aoye） |
 | **亲密层** | **归用户自建**；我不代写。架构上作为独立 opt-in 文件，群聊 preset 不含它 |
 | **代码布局** | 独立成仓（本仓），经 `--patch` 的 `file://` 行加载；不住进 DSH checkout（ADR 0002） |
-| **本地对话页** | 已验证跑通（`dsh --profile web`，preset `xiaoyan` + `example-llm/example-model`）；两轮人格探针通过（ADR 0004） |
+| **本地对话页** | 已验证跑通（`dsh --profile web`，preset `xiaoyan` + `suotianyi/deepseek-flash`）；两轮人格探针通过（ADR 0004） |
 
 ### 待确认
 
-1. **World-LLM 的模型**：Agent 模式已定 `example-model`。World-LLM 是否也用同一个？同一网关下可选 `deepseek-v4-flash-0731`，或 UI 里的 `DeepSeek` 组（`DeepSeek-V4-Flash` / `DeepSeek-V4-Pro`）。（原建议 flash/pro 分工，你未表态。）
+1. **World-LLM 的模型**：Agent 模式已定 `deepseek-flash`。World-LLM 是否也用同一个？同一网关下可选 `deepseek-v4-flash-0731`，或 UI 里的 `DeepSeek` 组（`DeepSeek-V4-Flash` / `DeepSeek-V4-Pro`）。（原建议 flash/pro 分工，你未表态。）
 2. ~~**账号 B 在窗口外是否断开连接？**~~ **已随双账号方案退役**（2026-09-26）：单账号常驻在线，被动响应不受窗口限制，inbox 机制取消。
 3. ~~**世界定义文本**：`persona/base.md` 与 `profile.md` 已从你的文档落地；`templates/world-definition.md`（世界定义）还没有内容。~~ **已关闭（2026-09-27）**：世界定义落在 `persona/world.md`（用户口述 + 代笔），不再走 `templates/world-definition.md`；创世事务已由它生成（10 实体）。
-4. ~~**Agent 模式是否需要 `web_search` / `web_fetch`？**~~ **✅ 已决并落地（2026-10-02 复核）**：要 —— `xiaoyan-agent` / `xiaoyan-world` / `xiaoyan-admin` 三个 preset **都声明了 `tool-web` 行**（`presets/*/agent.cordis.yml:141/141/179`），host 平面另插 `web-fetch-provider` = `dsh-web-fetch-http`（`cordis.patch.yml:267`）。§7.4-A 守卫以 `tools/pre-execute` 挂在**同一条 patch 的 host 平面**上，实测派发前拦下。⚠️ 但**覆盖面对不上"任何出网"**：只认 `url`/`urls` 两个参数名（§7.4-A"适用面"）。
+4. ~~**Agent 模式是否需要 `web_search` / `web_fetch`？**~~ **✅ 已决并落地（2026-10-04 复核）**：要 —— `xiaoyan-agent` / `xiaoyan-world` / `xiaoyan-admin` 三个 preset **都声明了 `tool-web` 行**，host 平面的 provider 由 `web-fetch-http` = `@deepseek-ai/dsh-web-fetch-http` 提供 —— ⚠️ 这一行的写法在 2026-10-04 变了：**发布版 `dsh-base@0.1.5-rc.3` 自带这一行**，我们不再 `- insert`，而是在 `cordis.patch.yml` 的「host 平面的 web 抓取 provider」一节里**覆盖它的 config**（`maxRedirects: 3` / `maxResponseBytes: 2000000` / `timeoutMs: 30000`）。插一份新的会与 base 那份撞成同一个插件两次实例化 → `a web provider with id "http" is already registered`，容器直接装不起来。§7.4-A 守卫以 `tools/pre-execute` 挂在**同一条 patch 的 host 平面**上，实测派发前拦下。⚠️ 但**覆盖面对不上"任何出网"**：只认 `url`/`urls` 两个参数名（§7.4-A"适用面"）。**Tavily key 仍未轮换**，且明文还在 `spike/llm-test.txt`（未入库，见 §7.4-D 末）。
 5. **小研会话用哪个工作区？** 实测里复用了你的 `cesu`。persona preset 无工具，工作区是惰性的；但长期看应该给小研一个专属工作区（如本仓或空目录）。
    ⚠️ **2026-10-02 升级：这条不再只是"整洁问题"。** §7.4-B 复核确认 `cwd` 由 profile patch 负责、bundle 里没有，而执行器的兜底是 `process.cwd()` —— **admin 的 shell 现在跑在哪个目录，取决于 DSH 从哪儿启动**（很可能是内核 checkout 本身）。要么把 `cwd` 写进 profile patch 并**验证**（`pwd` 一次），要么在这里定下小研的专属工作区并一并解决。
-6. **是否把 `example-model` 设为默认模型？** 目前 preset/模型选择不跨会话持久，每次要手选。设为默认需改 `settings.yaml` 的 `agent-default-model`（会同时影响你现有的其它会话）。
+6. **是否把 `deepseek-flash` 设为默认模型？** 目前 preset/模型选择不跨会话持久，每次要手选。设为默认需改 `settings.yaml` 的 `agent-default-model`（会同时影响你现有的其它会话）。
 
 ### 待实测（阻塞对应任务，不阻塞脚手架）
 
-5. ~~**⚠️ Git Bash 沙箱可用性（最高优先级）**~~ **✅ 已实测并记录（2026-10-02 复核收口）**：`dsh-bash-sandbox` 在 win32 **没有 runner**，`dsh-bash-local` 跑通（11 条断言）。安全降级的确认可信并已告知：README「安全须知」+ `docs/development-notes.md` 第 6 节 + 本条 §7.4-C。
+5. ~~**⚠️ Git Bash 沙箱可用性（最高优先级）**~~ **✅ 已实测并记录（2026-10-02 复核收口）**：`dsh-bash-sandbox` 在 win32 **没有 runner**，`dsh-bash-local` 跑通（ADR 0009，11 条断言）。安全降级的确认可信并已按你的要求告知：写在 §7.4-C 引用块 + README「安全须知」+ `docs/development-notes.md` 第 6 节。
    ⚠️ 两处措辞在这轮被纠正：沙箱**不是我们关掉的**（base 的 win32 平台门在关，本仓从无 `bash-sandbox` 的 disable 行）；且 `sandbox` / `sandbox-policy` / `fs-sandbox` / `approval` 四行**仍然 enabled**，失效的是唯一的执法行 `permission`。**"无沙箱"是平台条件性质，不是装配树的不变量。**
 6. ~~**⚠️ `@imhelper/onebot-v11` 的 v11 具体签名未逐字验证**~~ **✅ 走了预定的回退路（2026-10-02 复核）**：`@imhelper/onebot-v11` **从未被采用** —— `src/` 与 `package.json` 里没有它，只有 `ws@8.21.3`。协议层自己实现（`src/onebot/protocol.ts`：握手头 `X-Self-ID` / `X-Client-Role`、帧分类、API 帧构造；`src/onebot/service.ts`：反向 WS 服务端 + 账号注册表，ping/pong 用 WS 协议层）。已在线上跑通收/发（T10 与 `bridge.spec.ts` 28 条）。
 7. ~~**`MessageSource` augment 的确切模块说明符**（`@deepseek-ai/dsh-llm/types`？）~~ ——
@@ -1269,7 +1241,7 @@ packages/web/web-fetch-http/src/policy.ts:18
 | R5 | 十进制/八进制/十六进制 IPv4 字面量**当前被拦是靠 URL 解析器归一**，不是我们认得这些进制，且无测试 | 上游解析器一换形态就回归 | 补一组字面量用例（几行），并考虑自己解析 |
 | R6 | host 平面 disable 清单是硬编码 id 列表，反向测试只断言"行数 > 10"，**从不与 base 的真实 `tool-*` 行做差集** | ⚠️ **升级即失效**：DSH 哪天多一行 host tool，ADR 0013 那个"preset 干净但 host 泄漏"的故障会静默复活 | base 是 symlink 指向本地 checkout，测试注释里"无法直接读 monorepo"已不成立 → 现在就做得起差集断言 |
 | R7 | `admin` 的 shell 实际跑在哪个目录**无人可证**（`cwd` 在 git 外的 profile patch 里，兜底 `process.cwd()`） | §11 待确认 #5 因此升级为安全问题 | 在 profile patch 写 `cwd` 并跑一次 `pwd` 验证；或先定小研的专属工作区 |
-| R8 | 开发期曾有第三方 key 因内联 YAML 而泄漏进会话记录（见 §7.4-D 那条硬约束的由来） | 作者的运维事项，**与本包的读者无关**；`spike/` 不在本包内 | 纪律照抄就行：密钥只走 `apiKeyEnv` / `.credentials.yaml` |
+| R8 | `spike/llm-test.txt` 里那份真实 Tavily key **仍未轮换**（已泄漏进会话记录；未入库） | 只能由你在厂商侧操作 | 轮换后删文件 |
 
 ---
 
@@ -1309,8 +1281,7 @@ packages/web/web-fetch-http/src/policy.ts:18
 
 ## 13. 附录 B：关键源码索引
 
-**来源版本：`0.1.0-rc.5`**（作者本地的 DSH monorepo 检出 @ `47f9438`；本包不含那份源码。
-要重跑 §13 相关核对，设 `YANXIN_DSH_MONOREPO=<你的检出目录>`，见 `tests/unit/patch-semantics.spec.ts`）。
+**来源版本：`0.1.0-rc.5`**（本地 checkout `E:/project/cc/deepseek-harness` @ `47f9438`）。
 
 ⚠️ **运行时目标版本是 `0.1.5-rc.3`**，与下表来源隔 5 个 prerelease。下表是"当初读的是哪个文件"的指路，**不代表目标版本仍有同样实现**——须按任务 T0-C2 逐项重核后才可依赖。
 

@@ -97,7 +97,10 @@ export class WorldArbiter {
   private readonly maxAttempts: number
   private readonly warn: (message: string) => void
 
-  constructor(private readonly options: ArbiterOptions) {
+  private readonly options: ArbiterOptions
+
+  constructor(options: ArbiterOptions) {
+    this.options = options
     this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
     this.warn = options.warn ?? ((message) => console.warn(message))
   }

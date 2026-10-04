@@ -213,32 +213,32 @@ describe('T42 —— 崩溃语义：宁可重复，不可丢', () => {
 })
 
 describe('T42 —— session id 归一（重启不分裂）', () => {
-  it('原始 `admin:1000000001` 写出的文件，能用净化后的 `admin-1000000001` 接着攒', async () => {
+  it('原始 `admin:2000000001` 写出的文件，能用净化后的 `admin-2000000001` 接着攒', async () => {
     const { outbox, sent } = harness({ rounds: 3 })
 
-    await outbox.append('admin:1000000001', round('a'))
+    await outbox.append('admin:2000000001', round('a'))
     // 重启后的世界：只剩净化值（recover 从文件名读出来的就是它）
     await outbox.recover()
 
-    expect(outbox.pendingRounds('admin-1000000001'), '净化值必须看到同一份计数').toBe(1)
-    expect(outbox.pendingRounds('admin:1000000001'), '两个写法必须是同一个 entry').toBe(1)
+    expect(outbox.pendingRounds('admin-2000000001'), '净化值必须看到同一份计数').toBe(1)
+    expect(outbox.pendingRounds('admin:2000000001'), '两个写法必须是同一个 entry').toBe(1)
 
-    await outbox.append('admin-1000000001', round('b'))
-    await outbox.append('admin:1000000001', round('c'))
-    await outbox.flush('admin:1000000001')
+    await outbox.append('admin-2000000001', round('b'))
+    await outbox.append('admin:2000000001', round('c'))
+    await outbox.flush('admin:2000000001')
 
     expect(sent).toHaveLength(1)
     expect(sent[0]?.messages).toEqual(['问-a', '答-a', '问-b', '答-b', '问-c', '答-c'])
   })
 
   it('recover：已达阈值的残留补发（并恢复原始 id），未满的只恢复计数', async () => {
-    await writeOutboxFile('admin-1', 2, 'admin:1000000001') // 阈值 2 → 该补发
+    await writeOutboxFile('admin-1', 2, 'admin:2000000001') // 阈值 2 → 该补发
     await writeOutboxFile('group-9', 1, 'group:9') // 阈值 2 → 只恢复
 
     const { outbox, sent } = harness({ rounds: 2 })
     await outbox.recover()
 
-    expect(sent.map((entry) => entry.sessionId)).toEqual(['admin:1000000001'])
+    expect(sent.map((entry) => entry.sessionId)).toEqual(['admin:2000000001'])
     expect(outbox.pendingRounds('group:9')).toBe(1)
     expect(await linesOnDisk('group:9'), '未满批的仍在盘上继续攒').toHaveLength(1)
   })

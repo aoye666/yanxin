@@ -134,7 +134,7 @@ const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
  * 所以校验的是文件名合法性（`validate_session_id` → `validate_filename_component`）：
  * 不允许 `< > : " / \ | ? *`、首尾空白、结尾 `.`、Windows 保留设备名。
  *
- * 而 bridge 的 session id 长这样：`agent:2000000002:group:3000000003` —— **一堆冒号**。
+ * 而 bridge 的 session id 长这样：`agent:3000000001:group:3000000003` —— **一堆冒号**。
  * 于是 ReMe 回 `success: false, answer: "Error: session_id contains invalid characters"`，
  * 表现为**每轮写回静默失败**（召回自然一直是空的，但看起来像"没记住"而不是"没写进去"）。
  * 2026-09-26 实测踩到，见 ADR 0014。

@@ -214,7 +214,7 @@ describe('T34 —— 页与接口真的挂得上', () => {
     await fetch(`${base}/api/setup/run`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-yanxin-token': 's3cret' },
-      body: JSON.stringify({ step: 'accounts', accountId: ' 2000000002 ' }),
+      body: JSON.stringify({ step: 'accounts', accountId: ' 3000000001 ' }),
     })
     await fetch(`${base}/api/setup/run`, {
       method: 'POST',
@@ -222,7 +222,7 @@ describe('T34 —— 页与接口真的挂得上', () => {
       body: JSON.stringify({ step: 'world', rebuild: 'true' }),
     })
 
-    expect(calls[0]).toEqual({ step: 'accounts', input: { accountId: '2000000002' } })
+    expect(calls[0]).toEqual({ step: 'accounts', input: { accountId: '3000000001' } })
     expect(calls[1]).toEqual({ step: 'world', input: { rebuild: true } })
   })
 

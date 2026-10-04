@@ -212,3 +212,72 @@ describe('源码卫生 —— 守卫：spike/ 与 lib/ 不进仓库', () => {
 it('仓库根目录可读', () => {
   expect(statSync(ROOT).isDirectory()).toBe(true)
 })
+
+// ── 真实标识不许回流到跟踪文件 ────────────────────────────────────────────
+//
+// 2026-10-05 的教训：仓里散着真人 QQ 号与真实群号（279 处 / 52 个文件），
+// 而这些文件有一个是要推到**公开**仓的。上面那条"长数字串"的守卫只扫非测试的
+// 源码，恰好漏掉了数量最多的那两类（测试夹具与 docs/）。这里补一张明确的黑名单。
+
+/**
+ * 黑名单的每个值都**拆成两段存**。
+ *
+ * 这个文件本身就在被扫描范围内：把真值写成整串，守卫就亲手把它请回了仓库。
+ * 也别改用字符串相加（`'3855' + '048524'`）—— `no-useless-concat` 会警告你"合并成一条字面量"，
+ * 照它说的做就正中我们要防的那件事，所以这里用数组片段，运行时才拼。
+ */
+const REAL_IDENTIFIERS: ReadonlyArray<{ readonly parts: readonly [string, string]; readonly what: string }> = [
+  { parts: ['3855', '048524'], what: '她自己的 QQ 号（测试里曾叫 BOT）' },
+  { parts: ['1580', '089687'], what: '主人的 QQ 号（测试里曾叫 ALOYE）' },
+  { parts: ['2991', '064865'], what: '测试里曾叫 OTHER 的真人号' },
+  { parts: ['3052', '887539'], what: '测试里曾叫 THIRD 的真人号' },
+  { parts: ['1054', '390069'], what: '世界群的真实群号' },
+  { parts: ['1037', '369836'], what: '从她会话目录里看到的候选群之一' },
+  { parts: ['1097', '506987'], what: '同上' },
+  { parts: ['3723', '94262'], what: '同上' },
+]
+
+/** 要扫的目录（真实标识曾出现在 docs/ 与 tests/ 里，只扫 src 是不够的）。 */
+// 只扫会发布出去的那些目录：`spike/` 已在 .gitignore（那是本地草稿场，不该让守卫因它假红）。
+const SCANNED_DIRS = ['src', 'tests', 'docs', 'deploy', 'persona', 'presets', 'scripts', 'tasks']
+
+function collectAll(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === 'lib' || entry.name.startsWith('.')) continue
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) collectAll(full, out)
+    else out.push(full)
+  }
+  return out
+}
+
+describe('真实 QQ 号 / 群号不得出现在跟踪文件里', () => {
+  const files = SCANNED_DIRS.filter((d) => {
+    try {
+      statSync(join(ROOT, d)).isDirectory()
+      return true
+    } catch {
+      return false
+    }
+  }).flatMap((d) => collectAll(join(ROOT, d)))
+
+  it(`扫得到文件（${files.length} 个）—— 守卫自己不能悄悄失效`, () => {
+    expect(files.length).toBeGreaterThan(100)
+  })
+
+  it('一个真实标识都不在（脱敏是一次性的，回流是长期的）', () => {
+    const offenders: string[] = []
+    for (const file of files) {
+      let text: string
+      try {
+        text = readFileSync(file, 'utf8')
+      } catch {
+        continue // 二进制或读不动：不是文本就没有 QQ 号可言
+      }
+      for (const { parts, what } of REAL_IDENTIFIERS) {
+        if (text.includes(parts.join(''))) offenders.push(`${rel(file)} <- ${what}`)
+      }
+    }
+    expect(offenders, `这些文件里还有真实标识：\n${offenders.join('\n')}`).toEqual([])
+  })
+})

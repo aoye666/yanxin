@@ -113,7 +113,7 @@ describe('T27b-3 —— 驱动会话：她怎么想的那一轮', () => {
       },
     })
     provide('sessions', { flush: async (session: unknown) => void flushes.push(session) })
-    provide('agentDefaultModel', { currentSelection: () => ({ provider: 'example-llm', model: 'example-model-b' }) })
+    provide('agentDefaultModel', { currentSelection: () => ({ provider: 'agnes', model: 'agnes-3.0-flash' }) })
     // 没有持久化后端 → create 路径（没有磁盘日志）
     provide('sessionPersistence', { list: async () => [] })
     return { ctx, agents, presets, flushes }
@@ -131,13 +131,13 @@ describe('T27b-3 —— 驱动会话：她怎么想的那一轮', () => {
 
   it('⭐ 一轮：挂 preset → 发一段"处境" → 等她忙完 → 返回 null（动作走工具那条路）', async () => {
     const { ctx, agents, presets, flushes } = fakeCtx()
-    const { decide } = createLifeDecide({ ctx, account: '2000000002', warn: () => undefined })
+    const { decide } = createLifeDecide({ ctx, account: '3000000001', warn: () => undefined })
 
     const intent = await decide(context({ notices: ['做完了：看了看手机'] }))
 
     expect(intent).toBeNull()
     // 会话 id 与群聊同一个命名空间；preset 是世界姿态那一个
-    expect(String(agents.created[0]?.sessionId)).toBe('world:2000000002')
+    expect(String(agents.created[0]?.sessionId)).toBe('world:3000000001')
     expect(agents.created[0]?.preset).toBe(LIFE_PRESET)
     expect(presets.mounted.map((entry) => (entry as { id?: unknown }).id)).toEqual([LIFE_PRESET])
     // 她收到的那段话：带着"刚想起来的事"
@@ -148,7 +148,7 @@ describe('T27b-3 —— 驱动会话：她怎么想的那一轮', () => {
 
   it('⭐ 会话是**复用**的：第二拍不重复建（同一个她才有一份连续的生活）', async () => {
     const { ctx, agents } = fakeCtx()
-    const { decide } = createLifeDecide({ ctx, account: '2000000002', warn: () => undefined })
+    const { decide } = createLifeDecide({ ctx, account: '3000000001', warn: () => undefined })
 
     await decide(context())
     await decide(context({ at: 3601 }))
@@ -159,7 +159,7 @@ describe('T27b-3 —— 驱动会话：她怎么想的那一轮', () => {
 
   it('⭐ dispose 收掉会话句柄且幂等：窗口关闭时收一次，没建过会话时是无害的空操作', async () => {
     const { ctx, agents } = fakeCtx()
-    const life = createLifeDecide({ ctx, account: '2000000002', warn: () => undefined })
+    const life = createLifeDecide({ ctx, account: '3000000001', warn: () => undefined })
 
     // 还没跑过一轮（没建过会话）→ dispose 是空操作，不抛
     await life.dispose()
@@ -177,7 +177,7 @@ describe('T27b-3 —— 驱动会话：她怎么想的那一轮', () => {
   it('环境不全（没有 agent 服务）→ 告警一次 + 空转，不抛', async () => {
     const ctx = new Context()
     const warnings: string[] = []
-    const { decide } = createLifeDecide({ ctx, account: '2000000002', warn: (message) => warnings.push(message) })
+    const { decide } = createLifeDecide({ ctx, account: '3000000001', warn: (message) => warnings.push(message) })
 
     expect(await decide(context())).toBeNull()
     expect(await decide(context())).toBeNull()
@@ -200,14 +200,14 @@ describe('T27b-3 —— 驱动会话：她怎么想的那一轮', () => {
     const { ctx, agents } = fakeCtx()
     const { decide } = createLifeDecide({
       ctx,
-      account: '2000000002',
-      cwd: '~/.dsh/yanxin/workspace',
+      account: '3000000001',
+      cwd: 'C:/example/.dsh/yanxin/workspace',
       warn: () => undefined,
     })
 
     await decide(context())
 
-    expect(agents.created[0]?.cwd).toBe('~/.dsh/yanxin/workspace')
+    expect(agents.created[0]?.cwd).toBe('C:/example/.dsh/yanxin/workspace')
   })
 
   it('没配 cwd 时告警一次 —— 静默继承内核目录比报错更难查', async () => {

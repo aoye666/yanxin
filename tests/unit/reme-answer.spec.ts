@@ -36,7 +36,7 @@ describe('拆命中头：来源 / 行号 / 分数都变得可用', () => {
   })
 
   it('认不出一行头时退回"整段一条"（上游改格式 ≠ 她记性变差）', () => {
-    const plain = '## 关于主人\n- 喜欢 某部番剧\n- 熬夜'
+    const plain = '## 关于爸爸\n- 喜欢 MyGO\n- 熬夜'
     expect(splitRemeAnswer(plain)).toEqual([{ content: plain, source: 'reme' }])
   })
 

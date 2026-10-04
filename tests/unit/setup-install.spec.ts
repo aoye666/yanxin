@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { readEmbeddedPersona } from '../../src/preset/persona-embed.ts'
 import {
   installPersonaSource,
   installPresets,
@@ -37,6 +38,29 @@ async function scratch(): Promise<string> {
   return dir
 }
 
+/**
+ * 一个 preset 的 `agent.cordis.yml` 该长什么样 —— 夹具用**真实形态**。
+ *
+ * 为什么不能写成一行假文本：`installPresets` 现在会把人格**嵌进 persona 那一行**，
+ * 而它对认不出来的文件是**抛错**的（写坏 preset 的代价是所有会话挂载失败）。
+ * 夹具若给一份"什么都不是"的文本，测的就不是我们要测的东西了。
+ */
+function presetYml(id: string): string {
+  return (
+    `# 由 scripts/build-presets.mjs 生成 —— 不要手改\n` +
+    `- id: persona\n` +
+    `  name: '@deepseek-ai/dsh-persona'\n` +
+    `  config:\n` +
+    `    complete: true\n` +
+    `    includeRuntimeContext: false\n` +
+    `    prefix: |-\n` +
+    `      旧的出厂文本\n` +
+    `- id: tool-web\n` +
+    `  name: '@deepseek-ai/dsh-tool-web'\n` +
+    `  # ${id}\n`
+  )
+}
+
 /** 手搭一个"包根"：`persona/` + `presets/`。 */
 async function fakePackage(over: { base?: string; presets?: Record<string, string[]> } = {}): Promise<string> {
   const root = await scratch()
@@ -47,7 +71,10 @@ async function fakePackage(over: { base?: string; presets?: Record<string, strin
 
   for (const [id, files] of Object.entries(over.presets ?? { 'xiaoyan-agent': ['agent.cordis.yml', 'preset.yml'] })) {
     await mkdir(join(root, 'presets', id), { recursive: true })
-    for (const file of files) await writeFile(join(root, 'presets', id, file), `${id} 的 ${file}`, 'utf8')
+    for (const file of files) {
+      const text = file === 'agent.cordis.yml' ? presetYml(id) : `${id} 的 ${file}\n`
+      await writeFile(join(root, 'presets', id, file), text, 'utf8')
+    }
   }
   return root
 }
@@ -143,9 +170,29 @@ describe('T28c —— preset 安装', () => {
     await writeFile(join(presetRoot(home), 'xiaoyan-agent', 'agent.cordis.yml'), '被人手改了', 'utf8')
 
     await installPresets({ home, packageRoot })
-    expect(await readFile(join(presetRoot(home), 'xiaoyan-agent', 'agent.cordis.yml'), 'utf8')).toBe(
-      'xiaoyan-agent 的 agent.cordis.yml',
-    )
+    const installed = await readFile(join(presetRoot(home), 'xiaoyan-agent', 'agent.cordis.yml'), 'utf8')
+    // 产物是**重新生成**的，不是"恢复上次那份字节"：手改的内容必须整个不见了
+    expect(installed).not.toContain('被人手改了')
+    // 而嵌进去的人格来自**包内源**（这台机器上没人写过人格）
+    expect(readEmbeddedPersona(installed)).toContain('人格基底（出厂文本）')
+    expect(readEmbeddedPersona(installed)).toContain('背景资料（出厂文本）')
+    expect(installed).toContain('@deepseek-ai/dsh-tool-web') // 结构行仍在 —— 只换了 persona 那一段
+  })
+
+  it('⭐ 运营者写过的人格优先：重跑向导不许把人格退回出厂模板', async () => {
+    // 这条是"覆盖 bug"的回归护栏：installPresets 一度直接拷包内 preset，
+    // 于是"先在控制台写人格 → 再跑向导"会把人抹掉，症状是"她变成说明书口吻"。
+    const home = await scratch()
+    const packageRoot = await fakePackage()
+    await mkdir(personaDir(home), { recursive: true })
+    await writeFile(join(personaDir(home), 'base.md'), '她自己写的基底。', 'utf8')
+    await writeFile(join(personaDir(home), 'profile.md'), '她自己写的背景。', 'utf8')
+    await writeFile(join(personaDir(home), 'world.md'), '她自己写的世界。', 'utf8')
+
+    await installPresets({ home, packageRoot })
+    const embedded = readEmbeddedPersona(await readFile(join(presetRoot(home), 'xiaoyan-agent', 'agent.cordis.yml'), 'utf8'))
+    expect(embedded).toContain('她自己写的基底。')
+    expect(embedded).not.toContain('人格基底（出厂文本）')
   })
 })
 

@@ -28,7 +28,12 @@ import { SETUP_STEPS, stepIndex } from './types.ts'
 
 /** 现场证据 —— 从磁盘与服务读来的**事实**（不是"我以为"）。 */
 export interface SetupEvidence {
-  /** `$DSH_HOME/yanxin/persona/` 里的源文件（非空才算有）。 */
+  /**
+   * `$DSH_HOME/yanxin/persona/` 里的源文件 —— **写过真内容**才算有。
+   *
+   * ⚠️ 空模板不算（公开包出厂就是空模板，一句都不是她）：判据在
+   * `install.ts` 的 `hasAuthoredPersona`。按"文件非空"判会让新用户在空模板上一路创世。
+   */
   persona: { base: boolean; profile: boolean; world: boolean }
   /** preset 安装情况（三个都装好才算装好）。 */
   presets: { installed: number; total: number }
@@ -68,7 +73,7 @@ export function evaluateStep(step: SetupStep, evidence: SetupEvidence, record: S
 
   switch (step) {
     case 'persona': {
-      if (!evidence.persona.base) missing.push('人格基底还没导入（缺 yanxin/persona/base.md）')
+      if (!evidence.persona.base) missing.push('人格基底还没写（yanxin/persona/base.md 不在，或还是出厂空模板）—— 去控制台的 /yanxin/persona 页写她')
       // ⚠️ `total = 0` 是**打包损坏**（presets/ 目录缺失），不是"装齐了"——
       //    0/0 的除法直觉会让这一步恒真，守卫的降级路径随之放行，报错指向错误方向
       if (wanted === 0 || evidence.presets.installed < wanted) {
@@ -77,7 +82,7 @@ export function evaluateStep(step: SetupStep, evidence: SetupEvidence, record: S
       return { step, satisfied: missing.length === 0, missing }
     }
     case 'background': {
-      if (!evidence.persona.profile) missing.push('背景资料还没导入（缺 yanxin/persona/profile.md）')
+      if (!evidence.persona.profile) missing.push('背景资料还没写（yanxin/persona/profile.md 不在，或还是出厂空模板）—— 去控制台的 /yanxin/persona 页写她')
       if (wanted === 0 || evidence.presets.installed < wanted) {
         missing.push(`agent preset 还没装齐（${evidence.presets.installed}/${wanted}）`)
       }

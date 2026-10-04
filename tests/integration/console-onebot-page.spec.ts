@@ -23,7 +23,7 @@ import { TOKEN_ENV } from '../../src/console/logic.ts'
 import OneBotService from '../../src/onebot/service.ts'
 import MemorySettings from '../support/memory-settings.ts'
 
-const BOT = '2000000002'
+const BOT = '3000000001'
 const BASELINE_TOKEN = 'baseline-token-value'
 const NEW_TOKEN = 'rotated-token-value'
 

@@ -29,6 +29,14 @@ import type { Dirent } from 'node:fs'
 import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { embedPersonaText } from '../preset/persona-embed.ts'
+import {
+  composePersona,
+  isPersonaDraftTemplate,
+  MODE_BY_PRESET_ID,
+  PERSONA_SOURCE_NAMES,
+  type PersonaSources,
+} from '../preset/render.ts'
 import type { SetupEvidence } from './logic.ts'
 import type { SetupStep } from './types.ts'
 
@@ -68,9 +76,9 @@ export function presetRoot(home: string = dshHome()): string {
  * ⚠️ `accounts` 没有源文件：它绑的是账号，源在 onebot 行的部署配置里（见 `index.ts`）。
  */
 export const PERSONA_SOURCE_FILES: Partial<Record<SetupStep, string>> = {
-  persona: 'base.md',
-  background: 'profile.md',
-  world: 'world.md',
+  persona: PERSONA_SOURCE_NAMES.base,
+  background: PERSONA_SOURCE_NAMES.profile,
+  world: PERSONA_SOURCE_NAMES.world,
 }
 
 /** 内置的包根（`persona/`、`presets/` 所在）—— 相对于本文件编译后的位置。 */
@@ -156,22 +164,63 @@ const PRESET_FILES = ['agent.cordis.yml', 'preset.yml'] as const
  * 把三个 preset 装到 `$DSH_HOME/.agent-presets/`（DSH 的挂载点）。
  *
  * 幂等：内容一样也照样写（rename 是原子的，"看起来没变"不值得做一次读比对）。
+ *
+ * ⚠️ **人格段不是从包内拷来的，是重新嵌入的**（`effectivePersonaSources`）——
+ * 直接拷包内那份会把运营者在控制台人格页写过的东西**静默覆盖**回出厂模板。
+ * 这条不是防御性设计：向导的三步都会调这里，先写人格再跑向导是**推荐路径**，
+ * 少这一步她就变成一个空模板。
+ *
+ * 只认本仓那三个 preset id（`render.ts` 的 `PRESET_IDS`）；别的目录原样拷 ——
+ * 结构归包内文件所有，这里不猜。
  */
 export async function installPresets(paths: InstallPaths): Promise<InstallOutcome> {
   const ids = await sourcePresets(paths.packageRoot)
   if (ids.length === 0) throw new Error(`包内一个 preset 都没有：${join(paths.packageRoot, 'presets')}`)
 
+  const sources = await effectivePersonaSources(paths)
   const written: string[] = []
   for (const id of ids) {
+    const mode = MODE_BY_PRESET_ID.get(id)
     for (const file of PRESET_FILES) {
       const source = join(paths.packageRoot, 'presets', id, file)
       if (!(await exists(source))) continue
+      let text = await readFile(source, 'utf8')
+      if (mode !== undefined && file === 'agent.cordis.yml') {
+        text = embedPersonaText(text, composePersona(mode, sources))
+      }
       const target = join(presetRoot(paths.home), id, file)
-      await writeAtomic(target, await readFile(source, 'utf8'))
+      await writeAtomic(target, text)
       written.push(join('.agent-presets', id, file))
     }
   }
   return { detail: `已安装 ${ids.length} 个 preset：${ids.join(' / ')}`, written }
+}
+
+/**
+ * 人格的**有效来源**：装过的用装过的（`$DSH_HOME/yanxin/persona/`），没装过才用包内的。
+ *
+ * 方向是刻意的：装机后 DSH 读的是 `.agent-presets/` 里的嵌入结果，
+ * 而那份东西的**主人是运营者** —— 出厂文本只是第一次的起点，不是真相。
+ * 反过来（优先包内）就是"跑一次向导把人格里出厂模板覆盖回去"那条覆盖 bug 的另一种写法。
+ */
+export async function effectivePersonaSources(paths: InstallPaths): Promise<PersonaSources> {
+  const out = {} as PersonaSources
+  for (const key of ['base', 'profile', 'world'] as const) {
+    const name = PERSONA_SOURCE_NAMES[key]
+    const installed = await readOrNull(join(personaDir(paths.home), name))
+    const packaged = await readOrNull(join(paths.packageRoot, 'persona', name))
+    out[key] = (installed ?? packaged ?? '').trim()
+  }
+  return out
+}
+
+/** 读一个可能不存在的文本文件（不存在 / 读失败 → `undefined`，不抛）。 */
+async function readOrNull(file: string): Promise<string | undefined> {
+  try {
+    return await readFile(file, 'utf8')
+  } catch {
+    return undefined
+  }
 }
 
 // ── 证据（事实，不是判定）──────────────────────────────────────────────────
@@ -194,9 +243,9 @@ export async function readEvidence(
 
   return {
     persona: {
-      base: await hasContent(join(persona, 'base.md')),
-      profile: await hasContent(join(persona, 'profile.md')),
-      world: await hasContent(join(persona, 'world.md')),
+      base: await hasAuthoredPersona(join(persona, 'base.md')),
+      profile: await hasAuthoredPersona(join(persona, 'profile.md')),
+      world: await hasAuthoredPersona(join(persona, 'world.md')),
     },
     presets: { installed, total: ids.length },
     world: {
@@ -214,6 +263,22 @@ async function hasContent(file: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * 这一段是不是**有人写过**（存在 + 非空 + 不是出厂空模板）。
+ *
+ * ⚠️ 不能退回成上面的 `hasContent`：公开包的 `persona/` 是空模板 —— 标题、小节、`> TODO`
+ * 说明一样不少，按"非空"判就是"人格已装好"。于是新用户一路在空模板上创了世，
+ * 症状是"她说话像说明书"，而现场每一条证据都显示正常。
+ *
+ * 判据宽松（见 `isPersonaDraftTemplate`）：误判方向是"说她还没被写过"，
+ * 那在页面上看得见、改得动；反过来（悄悄放行空模板）才会坑人。
+ */
+async function hasAuthoredPersona(file: string): Promise<boolean> {
+  const text = await readOrNull(file)
+  if (text === undefined || text.trim() === '') return false
+  return !isPersonaDraftTemplate(text)
 }
 
 /**

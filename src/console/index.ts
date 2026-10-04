@@ -18,11 +18,16 @@
  *
  * ## 三道门（都能被测试证伪）
  *
- * 1. **回环**：非回环请求一律 403（webServer 的 host 配置是另一道门，但那个我们看不到
- *    —— 自己再守一道）
+ * 1. **在哪儿敲门**：默认非回环一律 403（webServer 的 host 配置是另一道门，但那个我们看不到
+ *    —— 自己再守一道）。Docker 形态要公网可达，所以有**默认关**的显式放行
+ *    `YANXIN_CONSOLE_ALLOW_REMOTE=1`（打开时启动会打 WARN，见 `logic.ts`）
  * 2. **token**：写操作必须带 `YANXIN_CONSOLE_TOKEN`（`logic.ts` 的 `authorize`）。
  *    **没配 token = 一律拒写**（fail-closed），而不是"不设防"
- * 3. **审计**：所有写操作（含被拒的）追加一行到 `$DSH_HOME/yanxin/audit/console.jsonl`
+ * 3. **审计**：所有写操作（含被拒的，**含被地址门拒的**）追加一行到
+ *    `$DSH_HOME/yanxin/audit/console.jsonl`
+ *
+ * ⚠️ 门 1 与门 2 现在**合并进同一个 `authorize` 调用**：分成两处判，就会有人加一条新路径时
+ *    只过了其中一处。
  *
  * ## 本文件不产出任何标记
  *
@@ -60,8 +65,10 @@ import {
   isLoopbackAddress,
   normalizePath,
   readToken,
+  remoteAccessAllowed,
   safeDecode,
   sparkline,
+  ALLOW_REMOTE_ENV,
   TOKEN_ENV,
   type Block,
 } from './logic.ts'
@@ -166,6 +173,16 @@ export default class ConsoleService extends Service {
     )
 
     this.ctx.logger.info(`[yanxin-console] 控制台挂载在 ${this.base}（写操作需要 ${TOKEN_ENV}）`)
+
+    // 远程放行是**安全边界的放宽**，不能只在配置里静静存在 —— 每次启动都喊一声。
+    // 本轮（Docker 形态）没有会话凭据，唯一的门就是那个 token，所以这句话必须出现在日志里，
+    // 让人在把端口暴露出去之前看见它。凭据改造（密码 + 会话）落地后这条 WARN 改成"已开密码"。
+    if (remoteAccessAllowed()) {
+      this.ctx.logger.warn(
+        `[yanxin-console] 已允许远程访问（${ALLOW_REMOTE_ENV}=1）：当前唯一凭据是 ${TOKEN_ENV} —— ` +
+          '公网可达 + 管理员私聊带未沙箱 shell，请只在受控网络里这样跑，测完把这一档关掉',
+      )
+    }
   }
 
   /** 挂载路径（页与接口注册时用）。 */
@@ -217,22 +234,19 @@ export default class ConsoleService extends Service {
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-
-    // 门一：回环。非回环一律拒（不看 token、不落到业务逻辑）
-    if (!isLoopbackAddress(req.socket.remoteAddress ?? undefined)) {
-      await auditWrite(this.ctx, { path: url.pathname, method: req.method ?? '', ok: false, reason: 'non-loopback' })
-      sendJson(res, 403, { ok: false, error: '只有本机能访问控制台' })
-      return
-    }
-
     const relative = safeDecode(url.pathname.slice(this.base.length)) // '' | '/world' | '/api/page/world'
 
-    // 门二：写操作 + 日志流要 token（其余读操作直接过；为什么日志流不算普通只读见 logic.ts）
+    // 门一 + 门二：都在 `authorize` 里判（地址那一维 + token 那一维）——
+    // 分成两处写就会出现"某一条路径绕过了其中一处"，而那是最难查的一类洞。
+    // 为什么地址门不能只看 webServer 的 host 配置：那是**行 config**，我们看不到也无法断言；
+    // 这一道由我们的代码守，能被测试证伪（`logic.ts` 的表驱动用例）。
     const verdict = authorize({
       method: req.method,
       path: relative,
       provided: readToken(req.headers, url.searchParams),
       expected: process.env[TOKEN_ENV],
+      loopback: isLoopbackAddress(req.socket.remoteAddress ?? undefined),
+      allowRemote: remoteAccessAllowed(),
     })
     if (!verdict.allowed) {
       await auditWrite(this.ctx, { path: url.pathname, method: req.method ?? '', ok: false, reason: verdict.reason })

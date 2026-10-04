@@ -11,11 +11,18 @@
  * 用法：node scripts/build-presets.mjs
  *
  * ⚠️ 生成的 agent.cordis.yml 是**产物**，不要手改 —— 手改会在下次生成时被覆盖。
- *    要改内容请改 persona/*.md。
+ *    要改内容请改 persona/*.md（或者直接在控制台的 `/yanxin/persona` 页写，
+ *    那条路会把同一个 `composePersona` 的规则跑一遍并重新嵌入已安装的 preset）。
+ *
+ * ⚠️ **人格怎么拼三段不在本文件里**：规则在 `src/preset/render.ts`，脚本 import 它。
+ *    控制台人格页用的是同一个函数 —— 两处各写一份就会漂成"她与世界不同源"，
+ *    而那正是 world-step 要花力气拦住的形态。
+ *    （因此本脚本需要 Node ≥22.18：它 import 的是 `.ts`，靠运行时的类型擦除。）
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { composePersona } from '../src/preset/render.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PRESETS = join(ROOT, 'presets')
@@ -24,9 +31,11 @@ function readPersona(name) {
   return readFileSync(join(ROOT, 'persona', name), 'utf8').trim()
 }
 
-const base = readPersona('base.md')
-const profile = readPersona('profile.md')
-const world = readPersona('world.md')
+const sources = {
+  base: readPersona('base.md'),
+  profile: readPersona('profile.md'),
+  world: readPersona('world.md'),
+}
 
 /** 把一段多行文本缩进成 YAML 块标量的一行行内容。 */
 function block(text, indent) {
@@ -37,14 +46,22 @@ function block(text, indent) {
     .join('\n')
 }
 
-/** 人格行：complete: true 让这段成为完整 system prompt。 */
+/**
+ * 人格行：`complete: true` 让这段成为完整 system prompt。
+ *
+ * ⚠️ 键名是 `prefix` 不是 `text` —— 发布版 `@deepseek-ai/dsh-persona` 的 Config 是
+ * `{prefix 必填, suffix, complete, includeRuntimeContext}`。写成 `text` 时三个 preset
+ * 全部挂载失败（`$.prefix missing required value`）、**人格整段丢弃**、她完全不回话；
+ * 而 docker 形态独有这条，因为本机形态跑的是源码版，键名容忍度不同（2026-10 容器验收撞到）。
+ * 改这个键名时必须同步 `src/preset/persona-embed.ts`（控制台写人格走的是另一条路）。
+ */
 function personaRow(text) {
   return `- id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
     complete: true
     includeRuntimeContext: false
-    text: |-
+    prefix: |-
 ${block(text, 6)}`
 }
 
@@ -52,11 +69,13 @@ ${block(text, 6)}`
 const WEB_ROWS = `# web 抓取工具。
 #
 # ⚠️ **provider 不在这里声明** —— web provider 是**进程级单例**，由 host 平面的
-#    'web-fetch-provider' 行提供（见 cordis.patch.yml）。base 只组合了
-#    dsh-web / dsh-web-search-deepseek，**没有** dsh-web-fetch-http，所以要我们自己补；
-#    但补在 preset 里会让**第二个被挂载的 preset 失败**：
+#    'web-fetch-http' 行提供。发布版 dsh-base（0.1.5-rc.3）**自带**那一行，
+#    我们只在 cordis.patch.yml 里**覆盖它的 config**（maxRedirects ≤ 3 等传输限额）。
+#    为什么绝不能补在 preset 里 —— 两个 preset 各声明一份，第二个挂载就失败：
 #      preset "xiaoyan-agent" failed to mount: a web provider with id "http" is already registered
-#    （2026-09-25 实测：admin 那条路修好之后，两个 preset 都声明 provider 才暴露出来。）
+#    （2026-09-25 实测：admin 那条路修好之后，两个 preset 都声明 provider 才暴露出来。
+#     2026-10-04 又踩了一次同形状的坑：那时我们插的行与 base 自带的行**同名不同 id**，
+#     于是同一个插件实例化两次，容器直接装不起来。）
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
 
@@ -155,8 +174,12 @@ const ASSISTANT_ROWS = `# ── Agent 模式全能力（仅 admin preset）─�
 - id: tool-subagent-list-agents
   name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
-- id: tool-subagent-report
-  name: '@deepseek-ai/dsh-tool-subagent-report'
+# ⚠️ 这里**原来还有一行** \`tool-subagent-report → @deepseek-ai/dsh-tool-subagent-report\`，
+#    2026-10-04 随基线迁到发布版 0.1.5-rc.3 时删掉了：那条包线在 npm 上停在 0.1.2-alpha.3，
+#    rc.3 的 \`dsh-tool-subagent-control\` 导出面只有 \`.\` 与 \`./list-agents\`（没有 ./report），
+#    base 的装配树里也没有那一行 —— 即**这个能力在发布版里不存在**。
+#    留着它的后果不是报错而是静默：preset 声明一个解析不到的插件，挂载时才炸。
+#    哪天上游又发回来了，再补这行（admin 的行集合测试也要一起改回去）。
 
 # 工作流（动态工作流的 worker 服务由 host 平面的 workflow-worker-thread 提供）
 - id: tool-workflow
@@ -174,7 +197,7 @@ const files = {
   'xiaoyan-agent': {
     yml: `${HEADER('xiaoyan-agent', '群聊脚手架（Phase 5 前顶着）/ 非管理员私聊兜底。人格 + 网页抓取，**没有 shell**。')}
 
-${personaRow(base + '\n\n' + profile)}
+${personaRow(composePersona('agent', sources))}
 
 ${WEB_ROWS}
 `,
@@ -188,7 +211,7 @@ ${WEB_ROWS}
   'xiaoyan-admin': {
     yml: `${HEADER('xiaoyan-admin', 'Agent 模式落地：管理员私聊（生活助理）。上面全部 + shell + 文件/任务/子代理全能力。')}
 
-${personaRow(base + '\n\n' + profile)}
+${personaRow(composePersona('admin', sources))}
 
 ${WEB_ROWS}
 
@@ -206,13 +229,7 @@ ${ASSISTANT_ROWS}
   'xiaoyan-world': {
     yml: `${HEADER('xiaoyan-world', 'World 模式。世界姿态人格 + 世界定义，**没有 shell**。世界工具待 Phase 5。')}
 
-${personaRow(
-      base +
-        '\n\n' +
-        profile +
-        '\n\n## 现在的状态\n你正在过自己的生活——不在跟谁即时对话，而是在自己的世界里行动。\n\n' +
-        world,
-    )}
+${personaRow(composePersona('world', sources))}
 
 ${WEB_ROWS}
 

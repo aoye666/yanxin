@@ -24,7 +24,7 @@ import type { OutboxItem } from '../../src/world/outbox.ts'
 const PACKAGE_ROOT = join(import.meta.dirname, '..', '..')
 const SELF_ID = 'yanxin'
 const GROUP = '3000000003'
-const QQ = '2000000002'
+const QQ = '3000000001'
 const NOW_MS = 1_800_000_000_000
 
 const homes: string[] = []
@@ -230,7 +230,7 @@ describe('T27b —— 引擎：ctx.world 就是那个门面', () => {
       })
       provide('agentPresets', { mount: async () => undefined })
       provide('sessions', { flush: async () => undefined })
-      provide('agentDefaultModel', { currentSelection: () => ({ provider: 'example-llm', model: 'example-model-b' }) })
+      provide('agentDefaultModel', { currentSelection: () => ({ provider: 'agnes', model: 'agnes-3.0-flash' }) })
       provide('sessionPersistence', { list: async () => [] })
     }
 

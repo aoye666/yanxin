@@ -34,15 +34,15 @@ afterEach(async () => {
 
 describe('T14 —— 四个 job 的请求形状', () => {
   it('`search` 发 query 与 limit，并解析字符串 answer', async () => {
-    const reme = await startFakeReme(okReply('## 关于主人\n- 喜欢 某部番剧\n- 熬夜'))
+    const reme = await startFakeReme(okReply('## 关于爸爸\n- 喜欢 MyGO\n- 熬夜'))
     opened.push(reme)
     const provider = new RemeProvider({ endpoint: reme.endpoint, timeoutMs: 2000 })
 
-    const hits = await provider.search('主人喜欢什么', { limit: 4 })
+    const hits = await provider.search('爸爸喜欢什么', { limit: 4 })
 
-    expect(reme.requests).toEqual([{ job: 'search', body: { query: '主人喜欢什么', limit: 4 } }])
+    expect(reme.requests).toEqual([{ job: 'search', body: { query: '爸爸喜欢什么', limit: 4 } }])
     expect(hits).toHaveLength(1)
-    expect(hits[0]?.content).toContain('某部番剧')
+    expect(hits[0]?.content).toContain('MyGO')
   })
 
   it('`record` 发 session_id 与 messages（ReMe 靠它自动沉淀）', async () => {
@@ -57,7 +57,7 @@ describe('T14 —— 四个 job 的请求形状', () => {
           { role: 'assistant', content: '在的' },
         ],
       },
-      'agent:2000000002:group:3000000003',
+      'agent:3000000001:group:3000000003',
     )
 
     expect(reme.requests).toEqual([
@@ -67,7 +67,7 @@ describe('T14 —— 四个 job 的请求形状', () => {
           // ⚠️ session_id **过了 `remeSessionId` 的净化**（冒号 → 短横线）。
           // 我们的 id 含 `:`，而 ReMe 把它当文件名组件校验 —— 直接发会被拒
           // （success:false，HTTP 200 的静默失败）。
-          session_id: 'agent-2000000002-group-3000000003',
+          session_id: 'agent-3000000001-group-3000000003',
           // ⚠️ 形状不是 `{role, content}`：ReMe 内部用 AgentScope 的 `Msg`
           // 做 pydantic 校验，`name` **必填**（缺了报 ValidationError，但 HTTP 仍回
           // 200 —— 表现为"写回静默失败"），`content` 是块数组。
@@ -263,13 +263,13 @@ describe('T14 —— 端到端降级（经 MemoryService）', () => {
   })
 
   it('正常路径：召回结果经服务透传（hits 带内容）', async () => {
-    const reme = await startFakeReme(okReply('小研喜欢发饰'))
+    const reme = await startFakeReme(okReply('小研喜欢四叶草'))
     opened.push(reme)
     const ctx = await makeMemoryCtx({ endpoint: reme.endpoint })
 
     const hits = await ctx.memory.search('喜欢什么')
     expect(hits).toHaveLength(1)
-    expect(hits[0]?.content).toContain('发饰')
+    expect(hits[0]?.content).toContain('四叶草')
   })
 
   it('`record` 经服务落到 auto_memory（写回不阻塞）', async () => {
@@ -362,19 +362,19 @@ describe('T41/T42 —— 超时按 job 分档', () => {
 /**
  * `session_id` 映射 —— ReMe 把它当**文件名组件**校验，所以这是一道真实的
  * 协议约束，不是风格问题。2026-09-26 对真实 ReMe 实测：直接发
- * `agent:2000000002:group:3000000003` 会拿到 `success: false`
+ * `agent:3000000001:group:3000000003` 会拿到 `success: false`
  * + `Error: session_id contains invalid characters`（HTTP 200 的静默失败）。
  */
 describe('T14 —— session_id 映射（ReMe 的文件名纪律）', () => {
   it('bridge 的真实 id 形状：冒号净化掉，仍然可读', () => {
-    expect(remeSessionId('agent:2000000002:group:3000000003')).toBe('agent-2000000002-group-3000000003')
-    expect(remeSessionId('admin:1000000001')).toBe('admin-1000000001')
-    expect(remeSessionId('world:1000000001')).toBe('world-1000000001')
+    expect(remeSessionId('agent:3000000001:group:3000000003')).toBe('agent-3000000001-group-3000000003')
+    expect(remeSessionId('admin:2000000001')).toBe('admin-2000000001')
+    expect(remeSessionId('world:2000000001')).toBe('world-2000000001')
   })
 
   it('确定性 —— 同一 session 永远映射到同一个 ReMe id', () => {
     // 否则 ReMe 每次都当新会话，会话日志累积不起来
-    const id = 'agent:2000000002:group:3000000003'
+    const id = 'agent:3000000001:group:3000000003'
     expect(remeSessionId(id)).toBe(remeSessionId(id))
   })
 

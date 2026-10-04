@@ -197,10 +197,10 @@ describe('T32 —— 管理员页：改名单、进审计', () => {
         body: JSON.stringify(body),
       })
 
-    await post('add', { senderId: '1000000001' })
-    expect(admin?.admins).toEqual(['1000000001'])
+    await post('add', { senderId: '2000000001' })
+    expect(admin?.admins).toEqual(['2000000001'])
 
-    const removed = (await (await post('remove', { senderId: '1000000001' })).json()) as { data: { detail: string } }
+    const removed = (await (await post('remove', { senderId: '2000000001' })).json()) as { data: { detail: string } }
     expect(admin?.admins).toEqual([])
     expect(removed.data.detail).toContain('已移出')
 
@@ -226,7 +226,7 @@ describe('T32 —— 管理员页：改名单、进审计', () => {
     await fetch(`${base}/api/admins/add`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-yanxin-token': 's3cret' },
-      body: JSON.stringify({ senderId: '1000000001' }),
+      body: JSON.stringify({ senderId: '2000000001' }),
     })
 
     const lines = readFileSync(auditFile('console'), 'utf8').split('\n').filter((line) => line !== '')
@@ -242,7 +242,7 @@ describe('T32 —— 管理员页：改名单、进审计', () => {
     const response = await fetch(`${base}/api/admins/add`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ senderId: '1000000001' }),
+      body: JSON.stringify({ senderId: '2000000001' }),
     })
     expect(response.status).toBe(401)
     expect(admin?.admins).toEqual([])
@@ -329,7 +329,7 @@ describe('T33 —— 世界 / 记忆 / 对话三页', () => {
         health: async () => ({ ok: true }),
         search: async (query: string) => {
           searched.push(query)
-          return [{ content: '下午的光斜进来', source: 'daily/2026-09-27.md', lines: [3, 5], sessionId: 'world:2000000002' }]
+          return [{ content: '下午的光斜进来', source: 'daily/2026-09-27.md', lines: [3, 5], sessionId: 'world:3000000001' }]
         },
       },
     })
@@ -369,14 +369,14 @@ describe('T33 —— 世界 / 记忆 / 对话三页', () => {
         data: {
           message: {
             content: [{ type: 'text', text: '早上好' }],
-            source: { kind: 'qq', mode: 'admin', userId: '1000000001' },
+            source: { kind: 'qq', mode: 'admin', userId: '2000000001' },
           },
         },
       },
       { type: 'tool/call', seq: 3, time: 1_790_458_002_000, data: { name: 'bash', arguments: '{"command":"ls"}' } },
       { type: 'tool/result', seq: 4, time: 1_790_458_003_000, data: {} },
     ]
-    const session = { id: 'admin:1000000001', events }
+    const session = { id: 'admin:2000000001', events }
     const { base } = await makeConsole({
       sessions: {
         list: () => [session],
@@ -385,9 +385,9 @@ describe('T33 —— 世界 / 记忆 / 对话三页', () => {
     })
 
     const list = (await page(base, 'talk')).data.blocks
-    expect(JSON.stringify(list)).toContain('admin:1000000001')
+    expect(JSON.stringify(list)).toContain('admin:2000000001')
 
-    const detail = JSON.stringify((await page(base, 'talk', '?session=admin%3A1000000001')).data.blocks)
+    const detail = JSON.stringify((await page(base, 'talk', '?session=admin%3A2000000001')).data.blocks)
     expect(detail).toContain('【admin】')
     expect(detail).toContain('早上好')
     expect(detail).toContain('bash(') // 工具调用

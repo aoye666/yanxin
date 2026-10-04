@@ -54,12 +54,17 @@ export interface SetupProgress {
  * `details` 是**可操作**的几句话（缺哪个文件、哪个配置项）。
  */
 export class SetupError extends Error {
+  readonly code: 'STEP_BLOCKED' | 'STEP_FAILED' | 'BAD_INPUT' | 'NOT_WIRED'
+  readonly details?: string[]
+
   constructor(
-    readonly code: 'STEP_BLOCKED' | 'STEP_FAILED' | 'BAD_INPUT' | 'NOT_WIRED',
+    code: 'STEP_BLOCKED' | 'STEP_FAILED' | 'BAD_INPUT' | 'NOT_WIRED',
     message: string,
-    readonly details?: string[],
+    details?: string[],
   ) {
     super(message)
+    this.code = code
+    this.details = details
     this.name = 'SetupError'
   }
 

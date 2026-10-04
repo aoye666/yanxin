@@ -12,8 +12,8 @@
  * ⚠️ **必须在 Git Bash 中运行 `pnpm test`**：Tier 1 零代码方案的成立前提就是
  *    `bash` 能在 PATH 上被解析到。若从 PowerShell/cmd 启动，`bash` 可能不在 PATH 上，
  *    下面的 `bash 可解析性` 那条会给出明确诊断，而不是让你看到一堆难懂的失败。
- *    （开发机上 Git 装在**非系统盘**，`C:\Program Files\Git` 这条标准路径并不存在 ——
- *     任何探测逻辑都不得硬编码盘符。）
+ *    （本机 Git 装在 **D 盘**：`D:\Program Files\Git\usr\bin\bash.exe` —— 任何探测逻辑
+ *     都不得硬编码盘符。）
  *
  * ⚠️ **API 用法**（实测发现，spec/plan 原先想当然写错了）：
  *    `ctx.shell.run()` 接受的是**已 resolve 的 `ShellExecSpec`**，不是 `ShellExecRequest`。
@@ -141,11 +141,12 @@ describe('Tier 1 —— 工作目录与输出上限', () => {
     const ctx = await makeShellCtx()
     const r = await sh(ctx, { command: 'pwd', workdir: process.cwd() })
     expect(r.exitCode).toBe(0)
-    // Git Bash 的 pwd 是 /e/... 形式，与 Windows 盘符形式不同；而且本仓会被别人 clone 到
-    // 任何目录、任何名字下 —— 所以断言"含当前目录名"，不写死任何项目名或盘符。
-    const here = process.cwd().split(/[\\/]/).pop()?.toLowerCase() ?? ''
-    expect(here).not.toBe('')
-    expect(r.stdout.text.toLowerCase()).toContain(here)
+    // Git Bash 的 pwd 是 /e/... 形式，与 Windows 盘符形式不同，所以只比"目录名"这一段。
+    // ⚠️ 别把仓名写死：开发副本叫 xiaoyan、公开副本叫 yanxin，写死等于让公开包跑不绿自己的测试
+    //   （2026-10-05 同步公开副本时就是这条红的）。
+    const dirName = process.cwd().split(/[\\/]+/).filter(Boolean).pop() ?? ''
+    expect(dirName).not.toBe('')
+    expect(r.stdout.text.toLowerCase()).toContain(dirName.toLowerCase())
   })
 
   it('超大输出被截断且标记 truncated（并有 spill 文件）', async () => {

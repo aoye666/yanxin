@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MessageStats } from '../../src/onebot/stats.ts'
 import {
-  OWNER_QQ,
+  ALOYE,
   BOT,
   GROUP,
   makeBridgeEnv,
@@ -26,7 +26,7 @@ import {
   type BridgeEnv,
 } from '../support/fake-bridge-env.ts'
 
-const OTHER = '2991064865'
+const OTHER = '2000000003'
 
 const opened: BridgeEnv[] = []
 
@@ -46,29 +46,29 @@ afterEach(async () => {
 describe('bridge —— 模式分流（安全边界：只有 admin 模式带 shell）', () => {
   it('管理员私聊 → preset 走 xiaoyan-admin，session 落 admin: 命名空间', async () => {
     const e = await env()
-    e.admin.admins.add(OWNER_QQ)
+    e.admin.admins.add(ALOYE)
 
-    e.emit(messageFrame({ messageType: 'private', userId: OWNER_QQ, text: '帮我看看磁盘' }))
+    e.emit(messageFrame({ messageType: 'private', userId: ALOYE, text: '帮我看看磁盘' }))
     await e.settle()
 
     expect(e.presets.mounts).toEqual(['xiaoyan-admin'])
-    expect(e.agents.created.map((c) => c.sessionId)).toEqual([`admin:${OWNER_QQ}`])
+    expect(e.agents.created.map((c) => c.sessionId)).toEqual([`admin:${ALOYE}`])
     expect(e.agents.created[0]?.agentPreset).toBe('xiaoyan-admin')
   })
 
   it('⚠️ 名单为空时 fail-closed：管理员 id 也走 xiaoyan-agent', async () => {
     const e = await env()
     // 刻意不加名单 —— 空名单必须一律 false，不能"认不出就当管理员"
-    e.emit(messageFrame({ messageType: 'private', userId: OWNER_QQ, text: '在吗' }))
+    e.emit(messageFrame({ messageType: 'private', userId: ALOYE, text: '在吗' }))
     await e.settle()
 
     expect(e.presets.mounts).toEqual(['xiaoyan-agent'])
-    expect(e.agents.created[0]?.sessionId).toBe(`agent:${BOT}:private:${OWNER_QQ}`)
+    expect(e.agents.created[0]?.sessionId).toBe(`agent:${BOT}:private:${ALOYE}`)
   })
 
   it('非管理员私聊 → xiaoyan-agent', async () => {
     const e = await env()
-    e.admin.admins.add(OWNER_QQ)
+    e.admin.admins.add(ALOYE)
 
     e.emit(messageFrame({ messageType: 'private', userId: OTHER, text: '你好' }))
     await e.settle()
@@ -79,9 +79,9 @@ describe('bridge —— 模式分流（安全边界：只有 admin 模式带 she
 
   it('⚠️ 群聊里即使是管理员也不走 admin（admin 只属于私聊通道）', async () => {
     const e = await env()
-    e.admin.admins.add(OWNER_QQ)
+    e.admin.admins.add(ALOYE)
 
-    e.emit(messageFrame({ messageType: 'group', groupId: GROUP, userId: OWNER_QQ, at: BOT, text: '大家好' }))
+    e.emit(messageFrame({ messageType: 'group', groupId: GROUP, userId: ALOYE, at: BOT, text: '大家好' }))
     await e.settle()
 
     expect(e.presets.mounts).toEqual(['xiaoyan-agent'])
@@ -327,14 +327,14 @@ describe('bridge —— 溯源随消息走（不是自定义 session 事件）',
 
   it('管理员私聊：source 是 mode=admin 且**没有 groupId 键**', async () => {
     const e = await env()
-    e.admin.admins.add(OWNER_QQ)
+    e.admin.admins.add(ALOYE)
 
-    e.emit(messageFrame({ messageType: 'private', userId: OWNER_QQ, text: '在吗' }))
+    e.emit(messageFrame({ messageType: 'private', userId: ALOYE, text: '在吗' }))
     await e.settle()
 
-    const agent = e.agents.get(`admin:${OWNER_QQ}`)
+    const agent = e.agents.get(`admin:${ALOYE}`)
     const source = agent?.sources[0] as Record<string, unknown>
-    expect(source).toMatchObject({ kind: 'qq', userId: OWNER_QQ, mode: 'admin', account: BOT })
+    expect(source).toMatchObject({ kind: 'qq', userId: ALOYE, mode: 'admin', account: BOT })
     expect('groupId' in source).toBe(false)
   })
 
@@ -372,7 +372,7 @@ describe('bridge —— 消息统计（控制台仪表盘的数据源）', () =>
       // 一条没触发的（群里没人 @ 她也没叫名字）+ 一条 @ 触发并成功回复的
       e.emit(messageFrame({ messageType: 'group', groupId: GROUP, userId: OTHER, text: '游戏好玩' }))
       await e.settle()
-      e.emit(messageFrame({ messageType: 'group', groupId: GROUP, userId: OWNER_QQ, at: BOT, text: '大家好' }))
+      e.emit(messageFrame({ messageType: 'group', groupId: GROUP, userId: ALOYE, at: BOT, text: '大家好' }))
       await e.settle()
 
       const overview = closer.overview()

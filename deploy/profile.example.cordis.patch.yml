@@ -33,11 +33,11 @@
 
     # 只接受这一个路径的升级请求（要与客户端里填的 URL 路径一致）。
     # 留空 = 接受任意路径；写出来是为了让"谁能连"这件事可审。
-    path: {{ONEBOT_PATH}}
+    path: "{{ONEBOT_PATH}}"
 
     # 与客户端的「鉴权 Token」填同一个值。留空则不校验（本机跑可以，但别偷懒）。
     # 两种承载都认：`Authorization: Bearer <token>` 头，或 URL 里的 `?access_token=`。
-    token: {{ONEBOT_TOKEN}}
+    token: "{{ONEBOT_TOKEN}}"
 
     # 账号注册表：**未注册的 selfId 连上来会被拒（403）**。
     # `preset` 决定这个账号的会话挂哪套能力集（三个 preset 的差别只有 shell / 世界工具）：
@@ -46,7 +46,7 @@
     #   xiaoyan-world —— World 模式：世界姿态人格，无 shell，但有世界工具
     # 想双号（一个聊天一个世界）就在 accounts 下再加一条，selfId 换成第二个号。
     accounts:
-      - selfId: '{{SELF_ID}}'
+      - selfId: "{{SELF_ID}}"
         preset: xiaoyan-agent
 
     # WS 协议层 ping 间隔。OneBot 规范里心跳默认是关的，所以存活检测只能自己做。
@@ -80,7 +80,7 @@
 
     # agent 的工作目录。preset 没有 fs/shell 工具时它是惰性的；
     # ⚠️ 但下面的 `bash.cwd` 与 `yanxin-world-engine.cwd` **必须和这里一致**，理由见那两段。
-    cwd: {{WORKSPACE}}
+    cwd: "{{WORKSPACE}}"
 
     # 超长回复截断（字符数）。
     maxReplyChars: 2000
@@ -95,7 +95,7 @@
 #    （Windows 上没有可用沙箱，见 spec §7.4-C）。这一段的作用是让她的文件足迹落在一个地方。
 - id: bash
   config:
-    cwd: {{WORKSPACE}}
+    cwd: "{{WORKSPACE}}"
     timeoutMs: 120000
     maxOutputBytes: 65536
 
@@ -122,14 +122,14 @@
 - id: yanxin-world-engine
   config:
     # 她主动发言要进的那个群。0 = 先不启用世界线；装完可在控制台世界页改（写 settings，下一句话生效）。
-    worldGroupId: '{{WORLD_GROUP_ID}}'
+    worldGroupId: "{{WORLD_GROUP_ID}}"
 
     # ⚠️ 必须与上面桥 / bash 两行的 cwd 一致。漏掉这一行的后果很隐蔽：她的**世界会话**
     #    会落到 process.cwd()（= DSH 的检出目录），而 agent 会把那个目录往上的工作区说明
     #    注入 prompt —— 实测发现她的内心独白里混进了内核自己的 AGENTS.md
     #    （"SQLite uses monotonic SCHEMA_VERSION" 这类写给改 DSH 的人看的话）。
     #    聊天线一直是对的，只有世界线会漏。
-    cwd: {{WORKSPACE}}
+    cwd: "{{WORKSPACE}}"
 
 # ── 窗口调度：她的作息（默认 14:00–18:00 装载世界）──────────────────────────
 # 窗口服务在 bundle patch 里**默认就是装载的**，不需要在这里"启用"。
@@ -146,7 +146,7 @@
 # 运行时改群号走控制台世界页（写 settings），这里只是第一次装载用的值。
 - id: console
   config:
-    worldGroupId: '{{WORLD_GROUP_ID}}'
+    worldGroupId: "{{WORLD_GROUP_ID}}"
     # 统计库与日志路径都不写 → 走缺省（`$DSH_HOME/yanxin/stats.db`）。
     # ⚠️ 首页仪表盘会显示计数与**群号**，而且是免凭据的本机读 —— 别把库指到版本库里。
 

@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import { isGroupMessage, PHONE_BUFFER, PhoneBuffer, phoneMessageOf, rawEventOf } from '../../src/world/phone.ts'
 
-const SELF = '2000000002'
+const SELF = '3000000001'
 
 /**
  * 一条群消息帧 —— ⚠️ **必须是运行时真正给的形状**：`onebot/event` 发的是项目
@@ -30,10 +30,10 @@ function groupFrame(over: Record<string, unknown> = {}, rawOver: Record<string, 
       message_type: 'group',
       group_id: 999000111,
       message_id: 4201,
-      user_id: 1000000001,
+      user_id: 2000000001,
       raw_message: '在吗',
       message: [{ type: 'text', data: { text: '在吗' } }],
-      sender: { user_id: 1000000001, nickname: 'owner' },
+      sender: { user_id: 2000000001, nickname: 'aoye' },
       ...rawOver,
     },
     ...over,
@@ -42,7 +42,7 @@ function groupFrame(over: Record<string, unknown> = {}, rawOver: Record<string, 
 
 describe('A) 一帧 → 一条手机消息', () => {
   it('群消息：昵称 + 文本', () => {
-    expect(phoneMessageOf(groupFrame(), SELF)).toEqual({ id: '4201', speaker: 'owner', text: '在吗' })
+    expect(phoneMessageOf(groupFrame(), SELF)).toEqual({ id: '4201', speaker: 'aoye', text: '在吗' })
   })
 
   it('私聊消息也算（她自己账号收到的一切都在手机里）', () => {
@@ -51,8 +51,8 @@ describe('A) 一帧 → 一条手机消息', () => {
   })
 
   it('没有昵称就用 QQ 号兜底（不编名字）', () => {
-    const frame = groupFrame({}, { sender: { user_id: 1000000001 } })
-    expect(phoneMessageOf(frame, SELF)?.speaker).toBe('QQ 1000000001')
+    const frame = groupFrame({}, { sender: { user_id: 2000000001 } })
+    expect(phoneMessageOf(frame, SELF)?.speaker).toBe('QQ 2000000001')
   })
 
   it('@ 与图片被归一成文本（与桥同一套归一化）', () => {
@@ -60,15 +60,15 @@ describe('A) 一帧 → 一条手机消息', () => {
       {},
       {
         message: [
-          { type: 'at', data: { qq: '2000000002' } },
+          { type: 'at', data: { qq: '3000000001' } },
           { type: 'text', data: { text: ' 看看这个' } },
           { type: 'image', data: { file: 'x.jpg' } },
         ],
-        raw_message: '[CQ:at,qq=2000000002] 看看这个[CQ:image,file=x.jpg]',
+        raw_message: '[CQ:at,qq=3000000001] 看看这个[CQ:image,file=x.jpg]',
       },
     )
     const parsed = phoneMessageOf(frame, SELF)
-    expect(parsed?.text).toContain('@2000000002')
+    expect(parsed?.text).toContain('@3000000001')
     expect(parsed?.text).toContain('看看这个')
     expect(parsed?.text).toContain('[图片]')
   })
@@ -78,11 +78,11 @@ describe('A) 一帧 → 一条手机消息', () => {
       post_type: 'message',
       message_type: 'group',
       message_id: 777,
-      user_id: 1000000001,
-      sender: { nickname: 'owner' },
+      user_id: 2000000001,
+      sender: { nickname: 'aoye' },
       message: [{ type: 'text', data: { text: '裸帧' } }],
     }
-    expect(phoneMessageOf(bare, SELF)).toEqual({ id: '777', speaker: 'owner', text: '裸帧' })
+    expect(phoneMessageOf(bare, SELF)).toEqual({ id: '777', speaker: 'aoye', text: '裸帧' })
   })
 
   it('⚠️ 形状错了要**看得出来**：EventFrame 里没有 raw 时按裸帧读（而不是静默当成非消息）', () => {

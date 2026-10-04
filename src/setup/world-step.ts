@@ -11,8 +11,8 @@
  *      代价是 `clock.json` 的 T=0 是"创世成功那一刻"而不是"点了按钮那一刻" ——
  *      这个世界本来就该从"她存在的那一刻"起算，这两者的差别恰好是我们要的。
  *
- *   2. **先校验、后归档**：人格安装（②）与定义一致性检查（③）都只碰 persona/preset
- *      目录，**不动世界**。它们全过了才轮到归档（①）—— 校验失败时旧世界原地不动，
+ *   2. **先装配、后归档**：人格源安装与 preset 重新嵌入（②）都只碰 persona/preset
+ *      目录，**不动世界**。它们全过了才轮到归档（①）—— 装配失败时旧世界原地不动，
  *      跑修好了重来即可。（反过来会把活跃世界先挪进归档、新世界又没建出来，
  *      engine 拒载、bot 失联，恢复要手工改回目录名。）
  *
@@ -31,9 +31,9 @@ import { WorldClock } from '../world/clock.ts'
 import { genesis } from '../world/genesis.ts'
 import { WorldKernel } from '../world/kernel.ts'
 import {
+  effectivePersonaSources,
   installPersonaSource,
   installPresets,
-  personaDir,
   type InstallOutcome,
   type InstallPaths,
 } from './install.ts'
@@ -86,26 +86,23 @@ export async function runWorldStep(options: WorldStepOptions): Promise<WorldStep
     ])
   }
 
-  // ② 世界定义装到位（人格源 + 重装 preset —— 她的世界姿态要跟着一起生效）。
+  // ② 世界定义装到位（人格源 + 重新嵌入 preset —— 她的世界姿态要跟着一起生效）。
   //    只碰 persona/preset 目录，不动世界 —— 放在归档之前，失败也留不下半成品
   const source = await installPersonaSource(options, 'world')
   const presets = await installPresets(options)
 
-  // ③ 创世前置：用**与 preset 同源**的那份世界定义
+  // ③ 创世用的世界定义就是**刚被嵌进 preset 的那一批源**（不再另读一份、也不再比一份）
   //
-  // ⚠️ 这里做一次一致性检查：她的提示词（preset）由**包内** `persona/world.md` 生成，
-  // 而世界该按同一份文本长出来。若运营者改了 `$DSH_HOME/yanxin/persona/world.md` 却没
-  // 重新生成 preset，两处就会分叉（她按老设定说话，世界的实体却是新的）—— 这种分叉很难查，
-  // 所以在这里**明确拦住**，并告诉他怎么修。拦在归档**之前**：旧世界原地不动。
-  const installed = await readFile(join(personaDir(options.home), 'world.md'), 'utf8')
-  const packaged = await readFile(join(options.packageRoot, 'persona', 'world.md'), 'utf8')
-  if (installed.trim() !== packaged.trim()) {
-    throw new SetupError('STEP_BLOCKED', '世界定义与 agent preset 不同源 —— 先重新生成 preset', [
-      `你改过 ${join(personaDir(options.home), 'world.md')}`,
-      '改世界定义的正确走法：改 persona/world.md → node scripts/build-presets.mjs → 重跑本步',
-      '（"改完立即重新生成"还没做，归 T32 控制台的写路径）',
-    ])
-  }
+  // 这里原来有一道"installed 的 world.md ≡ 包内 persona/world.md，不同源就拦住"的检查，
+  // 理由是对的（她按一份设定说话、世界的实体却是另一份，这种分叉极难查），
+  // 但 `installPresets` 现在**从已安装的人格源重新嵌入** persona 段
+  // （`effectivePersonaSources`）—— 走到这一步时两者由构造保证同源，检查恒真。
+  //
+  // 换掉它还有第二个理由：旧检查唯一的产出是让用户"去重跑 build-presets.mjs"，
+  // 而运营者改人格的正确入口已经是控制台的 `/yanxin/persona` 页 —— 一条只会把人
+  // 往命令行支走的拦阻，不如把他要的结果直接做出来。
+  const sources = await effectivePersonaSources(options)
+  const worldDoc = sources.world
 
   // ① 重建：归档旧世界（不删除 —— 这个功能的使用场景恰恰是"我搞错了"）。
   //    此刻校验已全过（②③ 都没碰世界），才轮到动它
@@ -119,7 +116,7 @@ export async function runWorldStep(options: WorldStepOptions): Promise<WorldStep
   const kernel = await WorldKernel.open(options.worldDir, { now, warn })
   let result: Awaited<ReturnType<typeof genesis>>
   try {
-    result = await genesis({ kernel, worldDoc: installed, callModel: options.callModel, selfId: options.selfId, warn })
+    result = await genesis({ kernel, worldDoc, callModel: options.callModel, selfId: options.selfId, warn })
   } catch (error) {
     // 内核的失败变成向导的失败（控制台只需处理一种错误类型）——
     // 但**不吞原因**：机读诊断逐条挪进 details

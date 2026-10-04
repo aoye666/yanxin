@@ -117,6 +117,19 @@ export class MemoryOutbox {
   }
 
   /**
+   * 所有 session 攒着的轮数之和。
+   *
+   * 为什么要单独这个口径：`flushNow` 是**发成功之后**才把计数清零的，所以沉淀在飞的那段
+   * 时间里这里仍然 >0 —— "总数回到 0" 就等于"没有写回还没落地"。而 `pendingRounds` 要先
+   * 知道有哪些 session，测试排空时用不起。
+   */
+  pendingRoundsTotal(): number {
+    let total = 0
+    for (const entry of this.entries.values()) total += entry.rounds
+    return total
+  }
+
+  /**
    * 收下一轮对话：落盘 + 计数，攒够则在**后台**触发 flush。
    *
    * 刻意不 await flush —— 那是要跑 19~27 秒的 LLM 沉淀，把它接回对话路径上

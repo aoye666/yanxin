@@ -77,8 +77,11 @@ const SCHEMA_STATEMENTS = [
 class RateLimitedWarn {
   private lastMinute = -1
   private fired = false
+  private readonly warn: (message: string) => void
 
-  constructor(private readonly warn: (message: string) => void) {}
+  constructor(warn: (message: string) => void) {
+    this.warn = warn
+  }
 
   hit(error: unknown): void {
     const minute = Math.floor(Date.now() / 60_000)

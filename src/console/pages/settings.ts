@@ -113,8 +113,8 @@ export function renderSettingsBlocks(
     action: `${base}/api/settings/model`,
     submit: '换模型',
     fields: [
-      { name: 'provider', label: 'provider', hint: 'settings 里 providers 下的路由 id，例如 main' },
-      { name: 'model', label: 'model', hint: '那条路由下的模型 id，例如 main-flash' },
+      { name: 'provider', label: 'provider', hint: '例如 agnes / suotianyi' },
+      { name: 'model', label: 'model', hint: '例如 agnes-3.0-flash' },
     ],
   })
 

@@ -178,13 +178,13 @@ describe('T13 —— 正常路径与 provider 生命周期', () => {
     const ctx = await makeCtx()
     ctx.memory.setProvider(
       okProvider({
-        search: async () => [{ content: '小研喜欢发饰', source: 'digest/personal/小研.md' }],
+        search: async () => [{ content: '小研喜欢四叶草', source: 'digest/personal/小研.md' }],
       }),
     )
 
     const hits = await ctx.memory.search('喜欢什么')
     expect(hits).toHaveLength(1)
-    expect(hits[0]?.content).toContain('发饰')
+    expect(hits[0]?.content).toContain('四叶草')
   })
 
   it('默认 limit 来自 settings 的 searchLimit', async () => {

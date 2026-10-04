@@ -151,7 +151,7 @@
     # （无会话、无历史），供两处消费：裁定者（T25 的到期结算）与创世（T29 的世界步）。
     #
     # ⚠️ 它是**服务**（进程级单例）而不是工具行 —— 消费它的两处都在 host 平面，
-    #    与 `web-fetch-provider` 同一个道理（ADR 0013：provider 放 host 平面）。
+    #    与下面那个 web fetch provider 同一个道理（ADR 0013：provider 放 host 平面）。
     #
     # ⚠️ `inject: ['llm']` 是硬依赖：没有 LLM 就没有这个适配器，这一行会 pending
     #    （而不是提供一个"调用必失败"的假服务 —— 那种静默失败最难查）。
@@ -229,6 +229,12 @@
       # `yanxin-onebot`，服务 watch 到就换绑 —— 不用重启）。
       # ⚠️ 非回环监听必须已有 token 且带确认勾选，两条缺一即拒（见该文件的安全门）。
       # 账号注册表（selfId → preset）在这一页**只读** —— 那是能力构成，改它走 profile patch。
+    - id: console-persona-page
+      name: 'yanxin/src/console/pages/persona.ts'
+      # 人格页：写三段人格源（基底 / 背景 / 世界）并**立刻重新嵌入**已安装的 preset。
+      # 公开包的 persona/ 是空模板，所以这一页是"她是谁"的第一个入口 ——
+      # 没有它，改人格要"手改文件 + 跑生成脚本 + 重装"三步全凭人记得（漏一步的症状是
+      # 她说话和人格不一致，而那会被归因成模型不行）。见该文件的三条纪律。
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 裁剪 host 平面的能力（spec §6.10 / ADR 0013）
@@ -256,10 +262,15 @@
 
 # ── host 平面的 web 抓取 provider ──────────────────────────────────────────
 #
-# base 只组合了 `dsh-web` / `dsh-web-search-deepseek`，**没有** `dsh-web-fetch-http` ——
-# 缺 provider 时 `web_fetch` 工具在但调用必失败。所以要自己补。
+# ⚠️ 这一节 2026-10-04 改过写法，因为**基线换到发布版**了。原先这里是一段 `- insert`
+#    （插 `web-fetch-provider`），理由写在下面那段历史里；而发布版 `@deepseek-ai/dsh-base`
+#    的 `0.1.5-rc.3` **已经自带**一行 `- id: web-fetch-http / name: dsh-web-fetch-http`。
+#    两份都装就是同一个插件实例化两次 → `a web provider with id "http" is already registered`
+#    → 整个插件树装不起来、容器 exit 1（2026-10-04 在 WSL 引擎上第一次真跑就撞在这）。
+#    现在改成**覆盖 base 那一行的 config**（id 必须跟着 base 写 `web-fetch-http`，
+#    写错 id 是静默不生效，见下面"整字段覆盖"那条）。
 #
-# ⚠️ **必须补在 host 平面，不能补在 preset 里**：provider 注册是**进程级单例**，
+# 历史（针对旧基线仍成立，留着别删）：provider 注册是**进程级单例**，
 # 两个 preset 各声明一份会让第二个挂载失败：
 #
 #   preset "xiaoyan-agent" failed to mount: a web provider with id "http"
@@ -269,31 +280,31 @@
 # 所以只有 agent 注册了 provider，冲突被掩盖着。）
 #
 # 分工与 shell 同构：**服务提供者放 host 平面，模型可见的工具由 preset 声明**。
-- insert:
-    - id: web-fetch-provider
-      name: '@deepseek-ai/dsh-web-fetch-http'
-      config:
-        # spec §7.4-A 第 4 条的传输限额。⚠️ **patch 是整字段覆盖** —— 这里写出的键
-        # 会一起替换 provider 的整个 config，所以把"我们要求的上限"写全，别只看没写的那几个
-        # （未写的键由 provider 自己的 schema 填默认：maxUrlLength 2048 / maxBodyChars 100000 /
-        # userAgent）。
-        #
-        # `maxRedirects` 必须是 **≤ 3**（spec 的硬要求），而上游默认是 **5**
-        # （packages/web/web-fetch-http/src/index.ts:34-56 的 `Config.maxRedirects`）——
-        # 不写这一行就等于默认放行 5 跳。
-        maxRedirects: 3
-        # 体积与超时也显式收窄：单次抓取最多 2 MB / 30 秒。
-        maxResponseBytes: 2000000
-        timeoutMs: 30000
+# base 的那行本来就挂在 host 平面，我们只换它的 config。
+- id: web-fetch-http
+  name: '@deepseek-ai/dsh-web-fetch-http'
+  config:
+    # spec §7.4-A 第 4 条的传输限额。⚠️ **patch 是整字段覆盖** —— 这里写出的键
+    # 会一起替换 provider 的整个 config，所以把"我们要求的上限"写全，别只看没写的那几个
+    # （未写的键由 provider 自己的 schema 填默认：maxUrlLength 2048 / maxBodyChars 100000 /
+    # userAgent）。
+    #
+    # `maxRedirects` 必须是 **≤ 3**（spec 的硬要求），而上游默认是 **5**
+    # （packages/web/web-fetch-http/src/index.ts:34-56 的 `Config.maxRedirects`）——
+    # base 自带的那行**没有 config**，所以这一键不写就等于默认放行 5 跳。
+    maxRedirects: 3
+    # 体积与超时也显式收窄：单次抓取最多 2 MB / 30 秒。
+    maxResponseBytes: 2000000
+    timeoutMs: 30000
 
-        # 重定向的**每一跳**为什么不在这里逐个校验（诚实记录）：
-        # 这个 provider 只跟**同源**跳转，跨源一律拒绝并抛 `WEB_REDIRECT_BLOCKED`
-        #   · policy.ts:43-54  `isSameOrigin`：scheme + hostname + port 三者全等
-        #   · provider.ts:55-101 `followAndRead`：每跳先 `validateFetchUrl` 再判同源，不同源即抛；
-        #     且请求用 `redirect: 'manual'`，Node 不会替我们偷偷跟
-        # 于是"实际会发起的每一个 URL"都落在**我们已校验过的那个 origin** 之内 ——
-        # 我们 own 的接缝（pre-execute）只需校验起始 URL + 这里卡住跳数上限。
-        # 若上游哪天改成跟随跨源，这条纪律就失效了：那正是 T35 的回归用例要盯的形态。
+    # 重定向的**每一跳**为什么不在这里逐个校验（诚实记录）：
+    # 这个 provider 只跟**同源**跳转，跨源一律拒绝并抛 `WEB_REDIRECT_BLOCKED`
+    #   · policy.ts:43-54  `isSameOrigin`：scheme + hostname + port 三者全等
+    #   · provider.ts:55-101 `followAndRead`：每跳先 `validateFetchUrl` 再判同源，不同源即抛；
+    #     且请求用 `redirect: 'manual'`，Node 不会替我们偷偷跟
+    # 于是"实际会发起的每一个 URL"都落在**我们已校验过的那个 origin** 之内 ——
+    # 我们 own 的接缝（pre-execute）只需校验起始 URL + 这里卡住跳数上限。
+    # 若上游哪天改成跟随跨源，这条纪律就失效了：那正是 T35 的回归用例要盯的形态。
 
 # ── host 平面的 shell 服务：用 Git Bash，而不是 pwsh 沙箱 ──────────────────
 #
@@ -341,8 +352,16 @@
 - id: permission
   disabled: true
 
-# 模型可见的工具行 —— 逐个禁用。清单以 `packages/bundle/base/cordis.patch.yml`
-# 里实际存在的 `tool-*` 行为准（2026-09-25 核对）。
+# 模型可见的工具行 —— 逐个禁用。
+# ⚠️ 清单口径 2026-10-04 换过：以**发布版 `@deepseek-ai/dsh-base@0.1.5-rc.3`** 装配树里
+#    实际存在的 `tool-*` 行为准（`dsh --profile bare --dump-config` 导出来逐行对的）。
+#    那 16 行是：bash pwsh jobs fs fs-search skill subagent subagent-control
+#    subagent-fork subagent-list-agents workflow result-pruner todo goal ralph web —— 下面全覆盖到了。
+#    另外还有 `tool-str-replace-editor` 与 `tool-subagent-report` 两条 —— 它们**只在内核检出里存在**，
+#    发布版没有这两个 id（对不上 id 的 patch 行不报错，只打一句 `entry … not found`）。
+#    **仍要留着**：本机那棵树还在由 base 声明这两行，删了就是把它们放给 agent。
+#    两道方向相反的静默坑（漏 vs 无效）都靠 `tests/unit/preset-capabilities.spec.ts`
+#    里那份"发布版 16 行 + 检出独有 2 行"的双向差集钉住。
 - id: tool-bash
   disabled: true
 - id: tool-pwsh
@@ -353,6 +372,12 @@
   disabled: true
 - id: tool-fs-search
   disabled: true
+# ⚠️ 下面两行在**发布版 0.1.5-rc.3** 里对不上任何 id（dsh 会打一句
+#    `patch: entry "tool-str-replace-editor" not found` 就过去），但在**内核检出**里是
+#    真禁 —— 那棵树由 base 自己声明这两行，删了这两条 disable 就等于把它们**漏给 agent**
+#    （2026-10-04 我用 `--dump-config` 在本机那棵树上验到过：两行都还在装配里）。
+#    所以留着它们：一句警告换一个不泄漏。等本机也迁到发布版（task 见 tasks/todo），
+#    再连同下面测试里的 CHECKOUT_ONLY_TOOL_ROWS 一起删。
 - id: tool-str-replace-editor
   disabled: true
 - id: tool-skill

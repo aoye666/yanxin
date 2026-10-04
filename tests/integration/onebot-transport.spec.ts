@@ -22,10 +22,10 @@ import OneBotService from '../../src/onebot/service.ts'
 import MemorySettings from '../support/memory-settings.ts'
 import { FakeOneBot } from '../support/fake-onebot.ts'
 
-const BOT = '2000000002'
+const BOT = '3000000001'
 /** 第二个号：换端口后要验"新端口接得住新连接"，但同一 (selfId, role) 再连会把旧连接顶掉，
  *  所以那条新连接必须换一个 selfId。 */
-const OTHER_BOT = '2999999999'
+const OTHER_BOT = '3999999999'
 const TOKEN = 'example-onebot-token-1234'
 const PATH = '/onebot/v11'
 

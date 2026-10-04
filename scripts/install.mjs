@@ -106,6 +106,21 @@ step(`dsh plugin --profile ${config.profile} add ${PACKAGE_ROOT}`, () => {
   if (out.status !== 0) fail(`dsh plugin add 失败。常见原因：DSH 版本对不上（本仓按 ${DSH_VERSION} 写的）、profile 名冲突`)
 })
 
+// ── 2b. 装上 base 没带的那个 provider ──────────────────────────────────────
+// `logger-console` 不在发布版 `dsh-base` 的依赖树里（base 只带 `session-log-deepseek`），
+// 而 `cordis.patch.yml` 的 logger-console 行要用它。它的 import 上下文是 **profile 目录**
+// （解析失败时的原文是 `imported from $DSH_HOME/profiles/<名字>/`），所以塞进本仓的
+// node_modules 不算解决 —— 必须装进 profile。少了它的表现不是"日志少一行"，
+// 是挂载时报 ERR_MODULE_NOT_FOUND、整个 profile 起不来。
+// 版本钉 **1.0.2**：peer 对得上本基线（cordis ^4.0.2 / schemastery ^3.18.2）的最后一版；
+// 1.0.3 要 ^4.0.3、1.0.4 要 ~4.0.4，装了就又是"两份 cordis 实例"那个坑（见 .npmrc 的记录）。
+const LOGGER_PLUGIN = '@deepseek-ai/cordis-plugin-logger-console@1.0.2'
+console.log('\n── 装上 base 没带的 provider ──')
+step(`dsh plugin --profile ${config.profile} add ${LOGGER_PLUGIN}`, () => {
+  const out = spawnSync('dsh', ['plugin', '--profile', config.profile, 'add', LOGGER_PLUGIN], { shell: true, stdio: 'inherit' })
+  if (out.status !== 0) fail(`装 ${LOGGER_PLUGIN} 失败 —— 没有它，patch 里的 logger-console 行会在挂载时解析不到`)
+})
+
 // ── 3. 工作目录 ────────────────────────────────────────────────────────────
 console.log('\n── 工作目录 ──')
 step(`mkdir ${workspace}`, () => {
@@ -155,21 +170,36 @@ console.log(`
 想先验证装配对不对：dsh --profile ${config.profile} --dump-config（记得别把输出贴到公开地方）
 `)
 
-/** 模板里的 `{{占位}}` 换成值；渲染完还剩占位就报错，不写半份配置出去。 */
+/**
+ * 模板里的 `{{占位}}` 换成值；渲染完还剩占位就报错，不写半份配置出去。
+ *
+ * ⚠️ 两个坑都在这函数里，别改回去：
+ *   · 值一律过 `esc` —— 模板把字符串占位符包在 `" "` 里，而裸插的纯数字值
+ *     （她的 QQ 号、手打的 token）会被 YAML 读成 number，schema 要 string，
+ *     症状是**整个 profile 挂载失败**而不是"这一项没生效"。
+ *   · 替换用**函数**而不是字符串 —— `String.replaceAll` 会把替换串里的 `$&` / `$1`
+ *     当特殊序列展开，token 里带一个 `$` 就能把占位符本身插进值里。
+ */
 function render(text, a) {
-  const out = text
-    .replaceAll('{{SELF_ID}}', a.selfId)
-    .replaceAll('{{ONEBOT_PORT}}', a.port)
-    .replaceAll('{{ONEBOT_PATH}}', a.path)
-    .replaceAll('{{ONEBOT_TOKEN}}', a.token)
-    .replaceAll('{{WEB_PORT}}', a.webPort)
-    .replaceAll('{{WORKSPACE}}', a.workspace)
-    .replaceAll('{{WORLD_GROUP_ID}}', a.groupId)
-    .replaceAll('{{WORLD_PROVIDER}}', a.provider)
-    .replaceAll('{{WORLD_MODEL}}', a.model)
+  const fill = (token, value) => text.replaceAll(token, () => esc(value))
+  let out = text
+  out = fill('{{SELF_ID}}', a.selfId)
+  out = out.replaceAll('{{ONEBOT_PORT}}', a.port)
+  out = fill('{{ONEBOT_PATH}}', a.path)
+  out = fill('{{ONEBOT_TOKEN}}', a.token)
+  out = out.replaceAll('{{WEB_PORT}}', a.webPort)
+  out = fill('{{WORKSPACE}}', a.workspace)
+  out = fill('{{WORLD_GROUP_ID}}', a.groupId)
+  out = fill('{{WORLD_PROVIDER}}', a.provider)
+  out = fill('{{WORLD_MODEL}}', a.model)
   const left = out.match(/\{\{[A-Z_]+\}\}/g)
   if (left !== null) fail(`这些值没填上：${[...new Set(left)].join(' ')} —— 用对应开关重跑`)
   return out
+}
+
+/** 双引号 YAML 标量的内部转义（模板已经把占位符包在引号里）。 */
+function esc(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
 function randomToken() {

@@ -1,0 +1,57 @@
+# Docker 构建上下文 —— 只带走镜像真正需要的东西
+#
+# 与 .gitignore 是两份独立清单：这里排除的只是"不必进镜像"，不是"不该入库"。
+# ⚠️ 每一行**保留**的理由都写在下面；新增排除项之前先想清楚运行时要不要它。
+
+# ── 排除：仓库与本地状态 ────────────────────────────────────────────────────
+.git
+.github
+.gitignore
+.qoder/
+.mimosa/
+.zcodeignore
+*.log
+logs/
+coverage/
+
+# 只给人看的文档与开发资产（运行时一行都不读）
+docs/
+tasks/
+README.md
+AGENTS.md
+lefthook.yml
+.oxlintrc.json
+vitest.config.ts
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# 测试与被 gitignore 的本地产物（镜像内部自己 build）
+tests/
+spike/
+napcat/
+node_modules/
+lib/
+data/
+.env
+.env.*
+*.key
+*.pem
+
+# 密钥与运行时数据**绝不进镜像**：.credentials.yaml 由 entrypoint 在容器里从环境变量首启写出
+.credentials.yaml
+
+# ── 排除：Python 的本地缓存（vendor 副本里不该带这些）────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+
+# ── 明确**保留**（列在这里免得被下次的批量排除带走）──────────────────────────
+# package.json / pnpm-lock.yaml / pnpm-workspace.yaml / .npmrc  —— install 与版本口径
+# cordis.patch.yml  —— bundle 层的装配（`dsh --plugin <目录>` 读 package.json 的 dsh.bundle.patch）
+# src/              —— ⚠️ patch 里的插件行写的是 'yanxin/src/…ts'，运行时真的在加载它
+# lib/ 不保留       —— builder 里 pnpm run build 自己产出，带走旧产物只会掩盖"改了没 build"
+# persona/ presets/ —— setup 靠 defaultPackageRoot() 找它们（空模板 + 生成产物）
+# deploy/           —— entrypoint 渲染 profile patch 的模板
+# docker/           —— 入口脚本
+# third_party/reme/ —— ReMe 的安装源（Apache-2.0，见该目录 UPSTREAM.md）

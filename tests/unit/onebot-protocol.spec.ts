@@ -26,8 +26,8 @@ function headers(map: Record<string, string | string[] | undefined>) {
 
 describe('parseHandshake —— 合法握手', () => {
   it.each(['API', 'Event', 'Universal'])('接受 X-Client-Role: %s', (role) => {
-    const r = parseHandshake(headers({ 'x-self-id': '2000000002', 'x-client-role': role }))
-    expect(r).toEqual({ ok: true, selfId: '2000000002', role, token: undefined })
+    const r = parseHandshake(headers({ 'x-self-id': '3000000001', 'x-client-role': role }))
+    expect(r).toEqual({ ok: true, selfId: '3000000001', role, token: undefined })
   })
 
   it('解析 Authorization: Bearer <token>', () => {
@@ -76,7 +76,7 @@ describe('classifyFrame —— ⚠️ 心跳陷阱（这条是本节存在的理
   /** 规范的真实心跳形状：同时带 post_type 与 status（status 是**对象**） */
   const heartbeat = {
     time: 1790333000,
-    self_id: 2000000002,
+    self_id: 3000000001,
     post_type: 'meta_event',
     meta_event_type: 'heartbeat',
     status: { online: true, good: true },
@@ -89,7 +89,7 @@ describe('classifyFrame —— ⚠️ 心跳陷阱（这条是本节存在的理
     if (f.kind === 'event') {
       expect(f.postType).toBe('meta_event')
       expect(isHeartbeat(f)).toBe(true)
-      expect(f.selfId).toBe('2000000002')
+      expect(f.selfId).toBe('3000000001')
     }
   })
 
@@ -103,7 +103,7 @@ describe('classifyFrame —— ⚠️ 心跳陷阱（这条是本节存在的理
   it('lifecycle connect 能被识别（NapCat 每次(重)连都会发）', () => {
     const f = classifyFrame({
       time: 1,
-      self_id: 2000000002,
+      self_id: 3000000001,
       post_type: 'meta_event',
       meta_event_type: 'lifecycle',
       sub_type: 'connect',
@@ -120,19 +120,19 @@ describe('classifyFrame —— 事件', () => {
   it('群消息事件：self_id 数字被字符串化（便于与握手头的字符串比对）', () => {
     const f = classifyFrame({
       time: 1,
-      self_id: 2000000002,
+      self_id: 3000000001,
       post_type: 'message',
       message_type: 'group',
       sub_type: 'normal',
       message_id: 99,
       group_id: 123456,
-      user_id: 1000000001,
+      user_id: 2000000001,
       message: 'hi',
       raw_message: 'hi',
     })
     expect(f.kind).toBe('event')
     if (f.kind === 'event') {
-      expect(f.selfId).toBe('2000000002')
+      expect(f.selfId).toBe('3000000001')
       expect(typeof f.selfId).toBe('string')
       expect(f.postType).toBe('message')
     }

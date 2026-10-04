@@ -170,10 +170,19 @@ ${CONSOLE_MARKDOWN_FILL}
         for (i = 0; i < block.fields.length; i++) {
           var field = block.fields[i]
           var kind = field.type || 'text'
-          var input = document.createElement('input')
+          var input = document.createElement(kind === 'textarea' ? 'textarea' : 'input')
           input.setAttribute('name', field.name)
-          input.setAttribute('type', kind)
-          if (field.value !== undefined) input.setAttribute('value', field.value)
+          // textarea 没有 type 属性（写了会变成无名属性，浏览器仍按 textarea 渲染）
+          if (kind !== 'textarea') input.setAttribute('type', kind)
+          if (field.value !== undefined) {
+            // 多行内容赋给 .value —— 不拼 HTML 字符串：人格里的 #、<、** 只会显示成文字
+            if (kind === 'textarea') input.value = field.value
+            else input.setAttribute('value', field.value)
+          }
+          if (kind === 'textarea') {
+            input.setAttribute('rows', '14')
+            input.setAttribute('spellcheck', 'false')
+          }
           if (kind === 'checkbox' && field.value === 'true') input.checked = true
           if (kind === 'hidden') { form.append(input); continue }
           var label = el('label', field.label)
@@ -202,7 +211,9 @@ ${CONSOLE_MARKDOWN_FILL}
     event.preventDefault()
     var form = event.target
     var payload = {}
-    var inputs = form.querySelectorAll('input')
+    // ⚠️ 选择器要带上 textarea：只查 input 的话，多行字段会被**静默丢掉** ——
+    // 表单看起来提交了、后端收到一个空 body，而症状是"什么都没改"，最难归因的一种。
+    var inputs = form.querySelectorAll('input, textarea')
     for (var i = 0; i < inputs.length; i++) {
       var input = inputs[i]
       payload[input.name] = input.type === 'checkbox' ? (input.checked ? 'true' : 'false') : input.value

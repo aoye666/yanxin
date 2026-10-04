@@ -60,7 +60,7 @@ function toolCall(name: string, json: string): StreamChunk[] {
   ]
 }
 
-const ROUTE: ModelRoute = { provider: 'example-llm', model: 'example-model-b' }
+const ROUTE: ModelRoute = { provider: 'agnes', model: 'agnes-3.0-flash' }
 
 function caller(script: StreamChunk[] | (() => never), over: { warn?: (m: string) => void } = {}) {
   const fake = fakeStream(script)
@@ -90,8 +90,8 @@ describe('T27b —— 工具调用被如实取回', () => {
 
     // 请求形状：路由 + 一个用户消息 + 那个工具
     const request = fake.seen[0]
-    expect(request?.provider).toBe('example-llm')
-    expect(request?.model).toBe('example-model-b')
+    expect(request?.provider).toBe('agnes')
+    expect(request?.model).toBe('agnes-3.0-flash')
     expect(request?.tools?.map((tool) => tool.name)).toEqual(['propose_world'])
     expect(request?.tools?.[0]?.parameters).toMatchObject({ type: 'object' })
     expect(request?.messages).toHaveLength(1)
@@ -224,16 +224,16 @@ describe('T27b —— 装配：服务形态与路由解析', () => {
     const service = new WorldModelService(ctx, {})
 
     await service.call({ prompt: 'x', tool: PROPOSE_WORLD })
-    expect(requests[0]?.model).toBe('example-model-b')
+    expect(requests[0]?.model).toBe('agnes-3.0-flash')
   })
 
   it('行 config 显式给了 provider/model 时优先（部署要指定"世界用哪个模型"）', async () => {
     const { ctx, requests } = env({ defaultRoute: ROUTE })
-    const service = new WorldModelService(ctx, { provider: 'example-llm', model: 'example-model' })
+    const service = new WorldModelService(ctx, { provider: 'suotianyi', model: 'deepseek-flash' })
 
     await service.call({ prompt: 'x', tool: PROPOSE_WORLD })
-    expect(requests[0]?.provider).toBe('example-llm')
-    expect(requests[0]?.model).toBe('example-model')
+    expect(requests[0]?.provider).toBe('suotianyi')
+    expect(requests[0]?.model).toBe('deepseek-flash')
   })
 
   it('两处都没有路由 → 错误信息可操作（说清去哪配）', async () => {

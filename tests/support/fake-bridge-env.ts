@@ -89,6 +89,14 @@ export class FakeAgent {
   readonly asked: string[] = []
   /** 记录每条入站消息的 `source`（T12 溯源）。 */
   readonly sources: unknown[] = []
+  /**
+   * 建模真实 agent 的状态。
+   *
+   * ⚠️ 这个字段先前**不存在**，于是桥里的 `entry.agent.status !== 'idle'` 恒真 ——
+   * `dropIdleAgents` 在假环境里从来没真的释放过任何句柄，"释放没 await"那条竞态
+   * 因此永远测不到（线上表现为 50 次 `session "…" already exists`）。
+   */
+  status: 'idle' | 'running' = 'idle'
 
   constructor(
     private readonly owner: FakeAgents,
@@ -103,6 +111,7 @@ export class FakeAgent {
   async whenIdle(): Promise<void> {
     const wait = this.owner.idleWaitMs
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+    this.status = 'idle'
   }
 
   followup(message: unknown): void {
@@ -111,6 +120,7 @@ export class FakeAgent {
     this.sources.push(inbound.source)
     this.owner.order.push(`followup:${this.sessionId}`)
 
+    this.status = 'running'
     this.session.append('turn/start', { turn: 1 })
     if (this.owner.reply !== undefined) {
       this.session.append('assistant/message', {
@@ -121,6 +131,8 @@ export class FakeAgent {
       })
     }
     this.session.append('turn/end', { turn: 1, reason: { kind: 'stop' } })
+    // 没有人为延迟时，这一轮在 followup 返回时就结束了（真实层由 whenIdle 报空闲）
+    if (this.owner.idleWaitMs === 0) this.status = 'idle'
   }
 }
 
@@ -140,7 +152,16 @@ function textOf(message: unknown): string {
 
 export class FakeOneBot extends Service {
   readonly calls: { selfId: string; action: string; params: unknown }[] = []
+  /** 每次调用的时刻（与 `calls` 同下标）—— 验"两条之间真的隔开了"用。 */
+  readonly times: number[] = []
   readonly accounts = new Map<string, { selfId: string; preset: string; model?: string }>()
+  /**
+   * 这些序号的调用**故意失败**（从 0 起，按 `calls` 的顺序）。
+   * 用来验"某条发不出去时不整体重发"——真失败在 live 里不可复现。
+   */
+  failAt: number[] = []
+  /** `get_forward_msg` 的返回（合并转发展开用）。没设时给空表 = "拉到了但没内容"。 */
+  forwardResult: unknown = { messages: [] }
 
   constructor(
     ctx: AnyCtx,
@@ -155,8 +176,12 @@ export class FakeOneBot extends Service {
   }
 
   async call(selfId: string, action: string, params: unknown): Promise<unknown> {
+    const index = this.calls.length
+    this.times.push(Date.now())
     this.order.push(`call:${action}`)
     this.calls.push({ selfId, action, params })
+    if (this.failAt.includes(index)) throw new Error(`假的一次调用失败（第 ${index + 1} 次）`)
+    if (action === 'get_forward_msg') return this.forwardResult
     return { message_id: 1 }
   }
 }
@@ -174,6 +199,14 @@ export class FakeAgents extends Service {
   sessionApi: 'snapshotEvents' | 'events' = 'snapshotEvents'
   /** `whenIdle()` 的延迟，用来让并发交错可观察。 */
   idleWaitMs = 0
+  /**
+   * `dispose()` 要花多久才真的把会话从 store 里摘掉。
+   *
+   * 真实层是异步的（`core/session` 的 detach disposer），所以这里默认也要**至少让出一个
+   * 微任务** —— 否则"释放没 await"这类竞态在假环境里根本不可能发生（它就曾因此漏掉
+   * 线上 50 次 `session "…" already exists`）。调大它可以让竞态窗口可观察。
+   */
+  disposeMs = 0
   /** 这一轮"模型"回什么；`undefined` 表示不回文本。 */
   reply: string | undefined = '好的'
 
@@ -214,6 +247,11 @@ export class FakeAgents extends Service {
     sessionId: string,
     setup?: (agentCtx: AnyCtx) => Promise<void> | void,
   ): Promise<{ agent: FakeAgent; dispose: () => Promise<void> }> {
+    // 建模 `core/session` 的 store：同一个 id 只能有一个活条目。
+    // ⚠️ 真实层这句检查在 `prepare` 的**最前面**，比 `seedSource === 'persistence'`
+    //    （即 resume）那条分支还早 —— 所以 resume 一样会撞。不建模这点，
+    //    "释放句柄没 await" 的竞态在假环境里永远不会发生。
+    if (this.live.has(sessionId)) throw new Error(`session "${sessionId}" already exists`)
     const agent = new FakeAgent(this, sessionId)
     // setup 必须被真的调用 —— "preset 有没有挂上"正是要验证的东西
     await setup?.(this.ctx)
@@ -221,6 +259,8 @@ export class FakeAgents extends Service {
     return {
       agent,
       dispose: async () => {
+        if (this.disposeMs > 0) await new Promise((resolve) => setTimeout(resolve, this.disposeMs))
+        else await Promise.resolve()
         this.live.delete(sessionId)
       },
     }
@@ -392,6 +432,11 @@ export interface BridgeEnvOptions {
     dryRun?: boolean
     cwd?: string
     maxReplyChars?: number
+    maxReplySegments?: number
+    maxReplyCharsPerSegment?: number
+    replySegmentGapMs?: number
+    stripReplyQuotes?: boolean
+    replyMixedLines?: 'keep-all' | 'quoted-only'
     model?: string
     stats?: boolean
     /** 不给就指向 :memory:（统计不落真实 $DSH_HOME，也不在临时目录留文件）。 */
@@ -477,6 +522,12 @@ export async function makeBridgeEnv(options: BridgeEnvOptions = {}): Promise<Bri
     contextMessages: 0,
     dryRun: false,
     maxReplyChars: 2000,
+    maxReplySegments: 4,
+    maxReplyCharsPerSegment: 200,
+    // 0 = 不等间隔：假环境里等 600ms 只会让每个用例白慢几秒
+    replySegmentGapMs: 0,
+    stripReplyQuotes: true,
+    replyMixedLines: 'keep-all',
     // 统计默认开，但落在 **:memory:**（测试不该写真实 $DSH_HOME，也不留临时文件）；
     // 要测统计本身就用 `options.config.statsPath` 指向临时目录，或 `stats: false` 关掉。
     stats: options.config?.stats ?? true,
@@ -500,8 +551,19 @@ export async function makeBridgeEnv(options: BridgeEnvOptions = {}): Promise<Bri
       ctx.emit('onebot/event', frame)
     },
     async settle() {
-      // 队列是 promise 链，给它几个宏任务周期排空
-      for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+      // 排空判据来自桥自己的队列（`drainQueues`）—— 链路里有**真的在睡**的步骤
+      // （分段间隔、`whenIdle`），"等固定宏任务"和"等观察安静"都会在半条链路上放行断言。
+      const bridge = ctx.get('onebot-bridge') as { drainQueues?(): Promise<void> } | undefined
+      await bridge?.drainQueues?.()
+      // 记忆写回**不在**那条队列里（`void memory.record(…)`，沉淀要跑十几秒不该挡住下一轮），
+      // 所以还要问记忆服务自己的口径：攒着的轮数回到 0 才算"她记住了"。
+      const memory = ctx.get('memory') as { pendingRoundsTotal?(): number } | undefined
+      const started = Date.now()
+      while ((memory?.pendingRoundsTotal?.() ?? 0) > 0 && Date.now() - started < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      // 其它尾巴（统计写库等）留几个宏任务收尾
+      for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 0))
     },
     async dispose() {
       await ctx.fiber.dispose()
@@ -512,8 +574,8 @@ export async function makeBridgeEnv(options: BridgeEnvOptions = {}): Promise<Bri
 
 // ── 造事件帧 ──────────────────────────────────────────────────────────
 
-export const BOT = '2000000002'
-export const OWNER_QQ = '1000000001'
+export const BOT = '3000000001'
+export const ALOYE = '2000000001'
 export const GROUP = '3000000003'
 
 export function messageFrame(over: {
@@ -523,9 +585,14 @@ export function messageFrame(over: {
   text: string
   at?: string
   selfId?: string
+  /**
+   * 插在文本段**之前**的额外消息段（合并转发、图片这些非文本段要用它）。
+   * `text` 仍然照旧进 `raw_message`，所以两种投递形态都能凑出来。
+   */
+  extraSegments?: unknown[]
 }): EventFrame {
   const selfId = over.selfId ?? BOT
-  const segments: unknown[] = []
+  const segments: unknown[] = [...(over.extraSegments ?? [])]
   if (over.at !== undefined) segments.push({ type: 'at', data: { qq: over.at } })
   segments.push({ type: 'text', data: { text: over.text } })
 

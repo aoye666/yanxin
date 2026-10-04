@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderMemories, withMemories } from '../../src/memory/inject.ts'
 
-const MESSAGE = '[群 3000000003 · 鹤(2991064865)] 游戏好玩'
+const MESSAGE = '[群 3000000003 · 鹤(2000000003)] 游戏好玩'
 
 describe('renderMemories —— 措辞与形态', () => {
   it('空召回 → 空串（调用方据此判断"什么都没加"）', () => {
@@ -25,13 +25,13 @@ describe('renderMemories —— 措辞与形态', () => {
 
   it('有召回 → 一段"你记得这些"，每条一个 `- ` 项', () => {
     const rendered = renderMemories([
-      { content: '主人是毕业生', source: 'a.md' },
-      { content: '喜欢 某部番剧', source: 'b.md' },
+      { content: '爸爸是高三学生', source: 'a.md' },
+      { content: '喜欢 MyGO', source: 'b.md' },
     ])
 
     expect(rendered).toContain('你记得这些')
-    expect(rendered).toContain('- 主人是毕业生')
-    expect(rendered).toContain('- 喜欢 某部番剧')
+    expect(rendered).toContain('- 爸爸是高三学生')
+    expect(rendered).toContain('- 喜欢 MyGO')
   })
 
   it('⚠️ 用第一人称"你记得"，不用"检索/匹配/知识库"这类工程词', () => {
@@ -44,10 +44,10 @@ describe('renderMemories —— 措辞与形态', () => {
 
   it('markdown 被压平成单行（标题符号、列表符号、换行都去掉）', () => {
     const rendered = renderMemories([
-      { content: '## 关于主人\n\n- 毕业班学生\n- 喜欢 某部番剧\n', source: 'a.md' },
+      { content: '## 关于爸爸\n\n- 高三学生\n- 喜欢 MyGO\n', source: 'a.md' },
     ])
 
-    expect(rendered).toContain('- 关于主人 毕业班学生 喜欢 某部番剧')
+    expect(rendered).toContain('- 关于爸爸 高三学生 喜欢 MyGO')
     // 压平后不该还有独立的标题行
     expect(rendered).not.toContain('##')
   })
@@ -63,21 +63,21 @@ describe('renderMemories —— 措辞与形态', () => {
 
 describe('renderMemories —— session 溯源翻成人话', () => {
   it.each([
-    ['agent:2000000002:group:3000000003', '[群 3000000003] '],
-    ['agent:2000000002:private:1000000001', '[私聊] '],
-    ['admin:1000000001', '[管理员私聊] '],
-    ['world:2000000002', '[世界] '],
+    ['agent:3000000001:group:3000000003', '[群 3000000003] '],
+    ['agent:3000000001:private:2000000001', '[私聊] '],
+    ['admin:2000000001', '[管理员私聊] '],
+    ['world:3000000001', '[世界] '],
   ])('%s → %s', (sessionId, label) => {
     expect(renderMemories([{ content: '内容', source: 's', sessionId }])).toContain(`- ${label}内容`)
   })
 
   it('⚠️ 绝不让模型看到工程格式的 session id', () => {
     const rendered = renderMemories([
-      { content: '内容', source: 's', sessionId: 'agent:2000000002:group:3000000003' },
+      { content: '内容', source: 's', sessionId: 'agent:3000000001:group:3000000003' },
     ])
 
     expect(rendered).not.toContain('agent:')
-    expect(rendered).not.toContain('2000000002')
+    expect(rendered).not.toContain('3000000001')
   })
 
   it('认不出的形态**不标**（宁可少一个标签，也不泄漏内部格式）', () => {
@@ -98,13 +98,13 @@ describe('withMemories —— 召回为空时必须逐字节一致', () => {
   })
 
   it('有记忆 → 记忆在前、消息在后，中间空一行', () => {
-    const memories = renderMemories([{ content: '喜欢 某部番剧', source: 'a.md' }])
+    const memories = renderMemories([{ content: '喜欢 MyGO', source: 'a.md' }])
 
     expect(withMemories(MESSAGE, memories)).toBe(`${memories}\n\n${MESSAGE}`)
   })
 
   it('空记忆与有记忆的差别只在"多了那段背景"，原消息部分完整保留', () => {
-    const memories = renderMemories([{ content: '喜欢 某部番剧', source: 'a.md' }])
+    const memories = renderMemories([{ content: '喜欢 MyGO', source: 'a.md' }])
     const withRecall = withMemories(MESSAGE, memories)
 
     expect(withRecall.endsWith(MESSAGE)).toBe(true)

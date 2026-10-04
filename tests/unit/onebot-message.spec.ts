@@ -10,20 +10,20 @@ import { normalizeMessage, parseCqString, unescapeCq } from '../../src/onebot/me
 describe('⚠️ 核心：array 与 string 两态归一到同一结构', () => {
   const asArray = [
     { type: 'text', data: { text: '你好 ' } },
-    { type: 'at', data: { qq: '1000000001' } },
+    { type: 'at', data: { qq: '2000000001' } },
     { type: 'text', data: { text: ' 看看这个' } },
     { type: 'image', data: { file: 'a.jpg' } },
   ]
-  const asString = '你好 [CQ:at,qq=1000000001] 看看这个[CQ:image,file=a.jpg]'
+  const asString = '你好 [CQ:at,qq=2000000001] 看看这个[CQ:image,file=a.jpg]'
 
   it('两种形态的 text / at / images 完全一致', () => {
     const a = normalizeMessage(asArray, 'raw')
     const b = normalizeMessage(asString, 'raw')
 
     expect(a.text).toBe(b.text)
-    expect(a.text).toBe('你好 @1000000001 看看这个[图片]')
+    expect(a.text).toBe('你好 @2000000001 看看这个[图片]')
     expect(a.at).toEqual(b.at)
-    expect(a.at).toEqual(['1000000001'])
+    expect(a.at).toEqual(['2000000001'])
     expect(a.images).toEqual(b.images)
     expect(a.images).toEqual(['a.jpg'])
     expect(a.atAll).toBe(b.atAll)
@@ -176,5 +176,27 @@ describe('normalizeMessage —— 非法输入不抛异常', () => {
   it('data 里数值被字符串化（规范说参数值几乎都是字符串，但不保证）', () => {
     const m = normalizeMessage([{ type: 'at', data: { qq: 12345 } }])
     expect(m.at).toEqual(['12345'])
+  })
+})
+
+describe('合并转发段（认出但不展开）', () => {
+  it('string 形态：认出 id，正文留占位符', () => {
+    const m = normalizeMessage('[CQ:forward,id=7788]看看这个')
+
+    expect(m.text).toBe('[forward]看看这个')
+    expect(m.forwards).toEqual([{ id: '7788', inline: undefined }])
+  })
+
+  it('array 形态：内联在 data.content 里的节点原样带出来（不被 string 化压成空）', () => {
+    const nodes = [{ nickname: '张三', content: [{ type: 'text', data: { text: '一' } }] }]
+    const m = normalizeMessage([{ type: 'forward', data: { id: '7788', content: nodes } }])
+
+    expect(m.forwards).toEqual([{ id: '7788', inline: nodes }])
+    // ⚠️ data.content 是数组，`asString` 会把它压成 '' —— 展开靠的是 raw data，不是 data
+    expect(m.segments).toHaveLength(1)
+  })
+
+  it('没有 forward 的消息：forwards 是空表（桥据此跳过 API 调用）', () => {
+    expect(normalizeMessage('普通一句话').forwards).toEqual([])
   })
 })

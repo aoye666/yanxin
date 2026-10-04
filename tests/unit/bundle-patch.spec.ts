@@ -39,6 +39,22 @@ function insertedRows(): Row[] {
 const ROWS = insertedRows()
 const byId = new Map(ROWS.map((r) => [r.id ?? '', r]))
 
+/**
+ * patch 的**两种写法**都在用：`- insert:` 里的是新增行，顶层直接 `- id:` 的是
+ * 覆盖 / 禁用 base 已有的行。只看 insert 会漏掉后者（2026-10-04 把抓取 provider
+ * 从"我们插一行"改成"覆盖 base 的 web-fetch-http"之后就是这个形状）。
+ */
+function allRows(): Row[] {
+  const patches = parse(RAW) as Array<Row & { insert?: Row[] }>
+  const rows: Row[] = []
+  for (const patch of patches) {
+    if (Array.isArray(patch?.insert)) rows.push(...patch.insert)
+    else if (patch?.id) rows.push(patch)
+  }
+  return rows
+}
+const byIdAll = new Map(allRows().map((r) => [r.id ?? '', r]))
+
 describe('bundle patch —— logger-console 必须放开级别阈值', () => {
   it('存在 logger-console 行', () => {
     expect(byId.has('logger-console')).toBe(true)
@@ -103,8 +119,13 @@ describe('bundle patch —— 其余必备行', () => {
     expect(byId.get('web-server')?.config).toEqual({ host: '127.0.0.1', port: 3080 })
   })
 
-  it('web-fetch-provider（抓取 provider，T35 的限额落在这一行）', () => {
-    const config = byId.get('web-fetch-provider')?.config ?? {}
+  it('web-fetch-http（覆盖 base 自带的抓取 provider，T35 的限额落在这行）', () => {
+    // ⚠️ 2026-10-04：provider 行**不再由我们 insert**。发布版 dsh-base 0.1.5-rc.3 自带
+    // `- id: web-fetch-http`，我们再插一份（旧写法叫 web-fetch-provider）就是同一个插件
+    // 实例化两次 → `a web provider with id "http" is already registered` → 整棵树装不起来。
+    expect(byId.has('web-fetch-provider'), '不许再插一份 web fetch provider —— base 已经有了').toBe(false)
+    const config = byIdAll.get('web-fetch-http')?.config ?? {}
+    expect(byIdAll.get('web-fetch-http')?.name).toBe('@deepseek-ai/dsh-web-fetch-http')
     // ⚠️ 上游默认 maxRedirects=5，spec §7.4-A 第 4 条要求 ≤3 —— 不写就是放行 5 跳
     expect(config.maxRedirects, '抓取跳数上限必须显式写进 config').toBeDefined()
     expect(Number(config.maxRedirects)).toBeLessThanOrEqual(3)

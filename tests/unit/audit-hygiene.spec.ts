@@ -60,7 +60,7 @@ function fakeCtx(): { ctx: any; fire: (event: string, ...args: unknown[]) => Pro
  *
  * ⚠️ 不能只等"文件存在"：`writeAudit` 是 `mkdir` → `appendFile` 两步，文件先以 0 字节存在，
  *    负载高时 `readFileSync` 正好落在那个空档里 → 读到空串 → `lines.length > 0` 偶发失败
- *    （全量跑 62 个 spec 文件时复现过一次，单跑永远绿 —— 典型的"测试自己抢跑"）。
+ *    （全量跑 61 个 spec 文件时复现过一次，单跑永远绿 —— 典型的"测试自己抢跑"）。
  *    所以判据改成：**至少一行，且以换行结尾**（`appendFile` 一次写完一行）。
  */
 async function waitForFile(path: string, minLines = 1, timeoutMs = 3_000): Promise<string> {
@@ -134,7 +134,7 @@ describe('T36 密钥卫生：假密钥跑三条链路', () => {
       callId: 's1',
       name: 'bash',
       arguments: { command, description: '探活' },
-      agent: { id: 'admin:1000000001' },
+      agent: { id: 'admin:2000000001' },
     }
     await fire('tools/pre-execute', exec, nextAllow)
     await fire('tools/result', exec, {
@@ -167,7 +167,7 @@ describe('T36 密钥卫生：假密钥跑三条链路', () => {
     ]) {
       expect(record, key).toHaveProperty(key)
     }
-    expect(record.account).toBe('1000000001')
+    expect(record.account).toBe('2000000001')
     expect(record.exitCode).toBe(0)
     expect(record.commandRedacted).toBe(true)
     for (const secret of [SECRET.deepseek, SECRET.bearer, SECRET.onebot]) {
@@ -203,14 +203,14 @@ describe('T36 密钥卫生：假密钥跑三条链路', () => {
 
     sendJson(res, 200, {
       ok: true,
-      data: { note: `token=${SECRET.console}`, admins: ['1000000001'] },
+      data: { note: `token=${SECRET.console}`, admins: ['2000000001'] },
     })
 
     const body = written.join('')
     expect(body).not.toContain(SECRET.console)
     expect(body).toContain('«redacted')
     // 不该误伤：管理员名单要原样出去（键名不以 key/token/secret/password 结尾）
-    expect(body).toContain('1000000001')
+    expect(body).toContain('2000000001')
   })
 
   it('grep 整个 $DSH_HOME：五个假密钥零命中，且每行都是合法 JSON', () => {

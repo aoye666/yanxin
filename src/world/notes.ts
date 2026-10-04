@@ -65,7 +65,11 @@ export function noteFileName(title: string): string {
 }
 
 export class WorldNotes {
-  private constructor(private readonly dir: string) {}
+  private readonly dir: string
+
+  private constructor(dir: string) {
+    this.dir = dir
+  }
 
   /** 打开（不存在就建目录 —— 她的本子第一页是空白，不是错误）。 */
   static async open(dir: string): Promise<WorldNotes> {

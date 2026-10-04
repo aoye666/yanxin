@@ -10,10 +10,10 @@
  *   4. 私聊不沾群上下文
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { OWNER_QQ, BOT, GROUP, makeBridgeEnv, messageFrame, type BridgeEnv } from '../support/fake-bridge-env.ts'
+import { ALOYE, BOT, GROUP, makeBridgeEnv, messageFrame, type BridgeEnv } from '../support/fake-bridge-env.ts'
 
-const OTHER = '2991064865'
-const THIRD = '3052887539'
+const OTHER = '2000000003'
+const THIRD = '2000000004'
 const NAME_SESSION = `agent:${BOT}:group:${GROUP}`
 
 const opened: BridgeEnv[] = []
@@ -128,10 +128,10 @@ describe('T32 —— 她刚才听见了什么', () => {
 
     said(e, OTHER, '群里才说的话')
     await e.settle()
-    e.emit(messageFrame({ messageType: 'private', userId: OWNER_QQ, text: '小研在吗' }))
+    e.emit(messageFrame({ messageType: 'private', userId: ALOYE, text: '小研在吗' }))
     await e.settle()
 
-    const privateAsked = e.agents.get(`agent:${BOT}:private:${OWNER_QQ}`)?.asked[0] ?? ''
+    const privateAsked = e.agents.get(`agent:${BOT}:private:${ALOYE}`)?.asked[0] ?? ''
     expect(privateAsked).toContain('小研在吗')
     expect(privateAsked).not.toContain('群里才说的话')
   })

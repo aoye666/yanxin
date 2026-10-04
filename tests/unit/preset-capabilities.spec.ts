@@ -63,9 +63,47 @@ const ASSISTANT_PACKAGES = new Set([
   '@deepseek-ai/dsh-tool-subagent',
   '@deepseek-ai/dsh-tool-subagent-control',
   '@deepseek-ai/dsh-tool-subagent-control/list-agents',
-  '@deepseek-ai/dsh-tool-subagent-report',
   '@deepseek-ai/dsh-tool-workflow',
 ])
+
+/**
+ * 发布版 `@deepseek-ai/dsh-base@0.1.5-rc.3` 装配树里**全部 16 行 `tool-*`**。
+ *
+ * 来源不是记忆：`dsh plugin --profile bare add @deepseek-ai/dsh-base` +
+ * `dsh --profile bare --dump-config`（2026-10-04 在镜像里导出的那份）。
+ * ⚠️ 换 dsh 版本时要**重新导一次这份清单**——下面两个方向都靠它：
+ *   · base 有而我们没禁 → host 行泄漏给每个 agent（能力面失控）；
+ *   · 我们禁了而 base 没有 → **静默不生效**（patch 的 id 对不上不报错），
+ *     这正是旧清单里 `tool-str-replace-editor` / `tool-subagent-report` 的形状：
+ *     它们只存在于内核检出，发布版没有，写着等于没写。
+ */
+const RC3_BASE_TOOL_ROWS = [
+  'tool-bash',
+  'tool-pwsh',
+  'tool-jobs',
+  'tool-fs',
+  'tool-fs-search',
+  'tool-skill',
+  'tool-subagent',
+  'tool-subagent-fork',
+  'tool-subagent-list-agents',
+  'tool-subagent-control',
+  'tool-workflow',
+  'tool-result-pruner',
+  'tool-todo',
+  'tool-goal',
+  'tool-ralph',
+  'tool-web',
+]
+
+/**
+ * **只在内核检出里存在**的 `tool-*` 行：发布版 0.1.5-rc.3 没这两个 id，
+ * 但检出那棵树由 base 自己声明着它们 —— 所以对应的 disable 行**不能删**，
+ * 删了就是把它们放给 agent（2026-10-04 在本机 `--dump-config` 里验到过：两行都还在装配里）。
+ * 代价是 dsh 打两句 `patch: entry … not found` 警告，认了。
+ * 本机迁到发布版 CLI 之后，这两条连同本清单一起删掉。
+ */
+const CHECKOUT_ONLY_TOOL_ROWS = ['tool-str-replace-editor', 'tool-subagent-report']
 
 /** 三个模式 preset（`presets/` 下以 xiaoyan- 开头的目录）。 */
 const MODE_PRESETS = readdirSync(PRESETS_DIR, { withFileTypes: true })
@@ -187,8 +225,10 @@ describe('T40 —— 助理全能力（fs / 任务 / 子代理 / 工作流）只
       (r) => typeof r.name === 'string' && ASSISTANT_PACKAGES.has(r.name),
     )
 
-  it('反向验证：检测器在 admin 上检出全部 11 行（包名拼错会让下面的断言假绿）', () => {
-    expect(assistantRows(SHELL_ALLOWED).length, 'admin 应检出 11 行（subagent 含 spawn/fork 两行）').toBe(11)
+  it('反向验证：检测器在 admin 上检出全部 10 行（包名拼错会让下面的断言假绿）', () => {
+    // 10 而不是 11：`tool-subagent-report` 在 2026-10-04 随基线迁到发布版 0.1.5-rc.3 时删了
+    // （那条包线停在 0.1.2-alpha.3，rc.3 的 subagent-control 也没有 ./report 导出）。
+    expect(assistantRows(SHELL_ALLOWED).length, 'admin 应检出 10 行（subagent 含 spawn/fork 两行）').toBe(10)
   })
 
   it.each(MODE_PRESETS.filter((p) => p !== SHELL_ALLOWED))('%s 不含任何助理全能力行', (preset) => {
@@ -198,7 +238,7 @@ describe('T40 —— 助理全能力（fs / 任务 / 子代理 / 工作流）只
     ).toEqual([])
   })
 
-  it('admin 的行集合恰好是那 15 行（防悄悄增删能力）', () => {
+  it('admin 的行集合恰好是那 14 行（防悄悄增删能力）', () => {
     const ids = (rowsByPreset.get(SHELL_ALLOWED) ?? []).map((r) => r.id).sort()
     expect(ids).toEqual(
       [
@@ -212,7 +252,6 @@ describe('T40 —— 助理全能力（fs / 任务 / 子代理 / 工作流）只
         'tool-subagent-control',
         'tool-subagent-fork',
         'tool-subagent-list-agents',
-        'tool-subagent-report',
         'tool-todo',
         'tool-web',
         'tool-workflow',
@@ -288,43 +327,36 @@ describe('ADR 0013 —— host 平面的能力裁剪（bundle patch）', () => {
   })
 
   it('host 平面提供 web provider（它是进程级单例，不能在 preset 里重复声明）', () => {
-    expect(rows.some((r) => r.id === 'web-fetch-provider' && r.name === '@deepseek-ai/dsh-web-fetch-http')).toBe(true)
+    // 发布版 dsh-base 0.1.5-rc.3 **自带** `- id: web-fetch-http`，我们只覆盖它的 config；
+    // 早先我们自己插的那行叫 `web-fetch-provider`，与 base 那份撞成同一个插件两次实例化，
+    // 容器起不来（2026-10-04）。所以这里查的是 base 的 id。
+    expect(rows.some((r) => r.id === 'web-fetch-http' && r.name === '@deepseek-ai/dsh-web-fetch-http')).toBe(true)
   })
 
   it('plan-mode 被禁用（编码 agent 的工作流，且会往 prompt 注入规则）', () => {
     expect(rows.find((r) => r.id === 'plan-mode')?.disabled).toBe(true)
   })
 
-  it.each([
-    'tool-bash',
-    'tool-pwsh',
-    'tool-jobs',
-    'tool-fs',
-    'tool-fs-search',
-    'tool-str-replace-editor',
-    'tool-skill',
-    'tool-subagent',
-    'tool-subagent-fork',
-    'tool-subagent-list-agents',
-    'tool-subagent-control',
-    'tool-subagent-report',
-    'tool-workflow',
-    'tool-ralph',
-    'tool-result-pruner',
-    'tool-todo',
-    'tool-goal',
-    'tool-web',
-  ])('host 行的 %s 被禁用（模型可见性只由 preset 决定）', (id) => {
+  it.each(RC3_BASE_TOOL_ROWS)('host 行的 %s 被禁用（模型可见性只由 preset 决定）', (id) => {
     const row = rows.find((r) => r.id === id)
     expect(row, `bundle patch 里缺少对 ${id} 的禁用 —— host 行会泄漏给每个 agent`).toBeDefined()
     expect(row?.disabled).toBe(true)
   })
 
-  it('反向验证：这些 id 在 base 里确实存在（否则上面的断言是在检查空气）', () => {
-    // 无法直接读 monorepo，但可以确认我们**没有**为不存在的 id 写禁用
-    // —— 若某天 base 改了 id，上面的断言会因 `row` 为 undefined 而失败并提示。
-    // 这条反向验证保证"禁用清单非空且结构正确"。
-    expect(rows.filter((r) => r.disabled === true).length).toBeGreaterThan(10)
+  it('反向验证：我们禁的每一行 tool-* 都在两份清单之一里（没有拼错的 id）', () => {
+    const known = new Set([...RC3_BASE_TOOL_ROWS, ...CHECKOUT_ONLY_TOOL_ROWS])
+    const disabledTool = rows.filter((r) => r.disabled === true && (r.id ?? '').startsWith('tool-')).map((r) => r.id ?? '')
+    const dead = disabledTool.filter((id) => !known.has(id))
+    expect(dead, `这些 tool-* 禁用行在两份清单里都不存在（id 拼错或基线已变）：${dead.join(', ')}`).toEqual([])
+  })
+
+  it('双向差集：发布版 16 行 + 检出独有 2 行，恰好等于我们的禁用集合', () => {
+    // 单向断言会漏一半：只查"base 有的都被禁"漏掉拼错的 id；只查反向则漏掉上游新增的工具。
+    const disabledTool = rows
+      .filter((r) => r.disabled === true && (r.id ?? '').startsWith('tool-'))
+      .map((r) => r.id ?? '')
+      .sort()
+    expect(disabledTool).toEqual([...RC3_BASE_TOOL_ROWS, ...CHECKOUT_ONLY_TOOL_ROWS].sort())
   })
 })
 
@@ -339,7 +371,7 @@ describe('人格是完整 system prompt（不混入编码 agent 引导语）', (
 
   it.each(MODE_PRESETS)('%s 的人格文本完整来自 persona/（单一来源，任何手工改动都会破）', (preset) => {
     const persona = (rowsByPreset.get(preset) ?? []).find((r) => r.name === '@deepseek-ai/dsh-persona')
-    const text = String((persona?.config as { text?: unknown } | undefined)?.text ?? '')
+    const text = String((persona?.config as { prefix?: unknown } | undefined)?.prefix ?? '')
 
     /** 源文件内容（读取方式与 `build-presets.mjs` 一致：trim 后拼进 prompt）。 */
     const source = (name: string): string =>

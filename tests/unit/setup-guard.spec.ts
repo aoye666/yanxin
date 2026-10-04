@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { allowAgent, allowWorld } from '../../src/setup/guard.ts'
 import { personaDir, presetRoot, worldDir } from '../../src/setup/install.ts'
-import { BOT, OWNER_QQ, FakeSetup, GROUP, makeBridgeEnv, messageFrame } from '../support/fake-bridge-env.ts'
+import { BOT, ALOYE, FakeSetup, GROUP, makeBridgeEnv, messageFrame } from '../support/fake-bridge-env.ts'
 
 const dirs: string[] = []
 const homes: string[] = []
@@ -43,7 +43,9 @@ async function readyHome(): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), 'yanxin-guard-'))
   dirs.push(home)
 
-  const packageRoot = join(import.meta.dirname, '..', '..')
+  // ⚠️ 用**夹具包根**而不是本仓目录：本仓的 `persona/` 在公开副本里是出厂空模板，
+  //   拿它当"装备齐全"的现场，公开包就跑不绿自己这条守卫（2026-10-05 实测）。
+  const packageRoot = join(import.meta.dirname, '..', 'fixtures', 'package-root')
   await mkdir(personaDir(home), { recursive: true })
   for (const file of ['base.md', 'profile.md', 'world.md']) {
     const text = await (await import('node:fs/promises')).readFile(join(packageRoot, 'persona', file), 'utf8')
@@ -126,7 +128,7 @@ describe('T30 —— bridge：未就绪时不建会话、不写记忆', () => {
     const env = await bridgeEnv({ memory: { hits: [] } })
     env.setup.markUnsatisfied('persona', ['人格基底还没导入（缺 yanxin/persona/base.md）'])
 
-    env.emit(messageFrame({ messageType: 'group', userId: OWNER_QQ, groupId: GROUP, text: '在吗', at: BOT }))
+    env.emit(messageFrame({ messageType: 'group', userId: ALOYE, groupId: GROUP, text: '在吗', at: BOT }))
     await env.settle()
 
     // 没有会话、没有 agent、没有写回 —— 记忆没被污染
@@ -146,7 +148,7 @@ describe('T30 —— bridge：未就绪时不建会话、不写记忆', () => {
     env.setup.markUnsatisfied('persona', ['人格还没导入'])
 
     for (const text of ['一', '二', '三']) {
-      env.emit(messageFrame({ messageType: 'group', userId: OWNER_QQ, groupId: GROUP, text, at: BOT }))
+      env.emit(messageFrame({ messageType: 'group', userId: ALOYE, groupId: GROUP, text, at: BOT }))
     }
     await env.settle()
 
@@ -160,7 +162,7 @@ describe('T30 —— bridge：未就绪时不建会话、不写记忆', () => {
     const env = await bridgeEnv()
     env.setup.markUnsatisfied('world', ['世界还没创世'])
 
-    env.emit(messageFrame({ messageType: 'group', userId: OWNER_QQ, groupId: GROUP, text: '在吗', at: BOT }))
+    env.emit(messageFrame({ messageType: 'group', userId: ALOYE, groupId: GROUP, text: '在吗', at: BOT }))
     await env.settle()
 
     // 她有人格 → 可以说这句话；世界没创世只影响"主动过日子"（引擎不装载）
@@ -170,7 +172,7 @@ describe('T30 —— bridge：未就绪时不建会话、不写记忆', () => {
 
   it('就绪之后照常放行（守卫不该拦住正常对话）', async () => {
     const env = await bridgeEnv()
-    env.emit(messageFrame({ messageType: 'group', userId: OWNER_QQ, groupId: GROUP, text: '在吗', at: BOT }))
+    env.emit(messageFrame({ messageType: 'group', userId: ALOYE, groupId: GROUP, text: '在吗', at: BOT }))
     await env.settle()
 
     expect(env.agents.created).toHaveLength(1)

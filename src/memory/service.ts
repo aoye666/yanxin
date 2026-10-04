@@ -211,14 +211,19 @@ export default class MemoryService extends Service {
   /** 写回缓冲（T42）。**首次写回时惰性建**：没配 provider 就不该创建文件/扫盘。 */
   private outbox: MemoryOutbox | undefined
 
+  /** 已调用、还没落进 outbox 缓冲的 `record` 数（排空判据要连这段一起看）。 */
+  private inFlightRecords = 0
+
   /** `yanxin-memory` 命名空间的 settings 作用域（三级回退的第一级）。 */
   private readonly scope: SettingsScope<MemoryConfig>
+  private readonly config: MemoryConfig
 
   constructor(
     ctx: Context,
-    private readonly config: MemoryConfig,
+    config: MemoryConfig,
   ) {
     super(ctx, 'memory')
+    this.config = config
     this.scope = ctx.settings.register(NAMESPACE, ConfigSchema)
 
     // 装载 provider，并随 settings 变化重装。
@@ -370,8 +375,16 @@ export default class MemoryService extends Service {
    * 这样才可能不把 19-27s 的 LLM 沉淀接回对话路径。
    */
   async record(trajectory: Trajectory, sessionId: string): Promise<void> {
-    if (this.active === undefined) return
-    await this.ensureOutbox().append(sessionId, trajectory)
+    // 计数在**任何 await 之前**加：调用方是 `void memory.record(…)`（挂在微任务上），
+    // 而 append 要 await 落盘才把轮数记进 outbox —— 只数 outbox 的话，"已收下但还没落盘"
+    // 的那一段在排空判据里是隐形的（2026-10-05 测试就是这么间歇只看到一条写回）。
+    this.inFlightRecords += 1
+    try {
+      if (this.active === undefined) return
+      await this.ensureOutbox().append(sessionId, trajectory)
+    } finally {
+      this.inFlightRecords -= 1
+    }
   }
 
   /**
@@ -392,6 +405,17 @@ export default class MemoryService extends Service {
    */
   pendingRounds(sessionId: string): number {
     return this.outbox?.pendingRounds(sessionId) ?? 0
+  }
+
+  /**
+   * 全部 session 攒着的轮数之和（回到 0 = 没有写回还在飞）。
+   *
+   * ⚠️ 同 `flush` / `pendingRounds`：目前只有测试拿它做排空判据。写回本身是
+   * `void memory.record(…)` 挂在会话队列之外的（沉淀要跑十几秒，不该挡住下一轮），
+   * 所以桥的 `drainQueues` 看不见它 —— 测试要等"她记住了"，就得问这个数。
+   */
+  pendingRoundsTotal(): number {
+    return this.inFlightRecords + (this.outbox?.pendingRoundsTotal() ?? 0)
   }
 
   /**

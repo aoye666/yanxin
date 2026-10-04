@@ -14,18 +14,18 @@ import {
   type TriggerInput,
 } from '../../src/onebot/session-trigger.ts'
 
-const BOT = '2000000002'
-const OWNER_QQ = '1000000001'
+const BOT = '3000000001'
+const ALOYE = '2000000001'
 
 // ── session 命名 ──────────────────────────────────────────────────────
 
 describe('sessionIdFor —— 记忆写回的粒度（spec §6.5）', () => {
   it.each([
     ['agent', 'group:3000000003', `agent:${BOT}:group:3000000003`],
-    ['agent', 'private:1000000001', `agent:${BOT}:private:${OWNER_QQ}`],
-    ['admin', 'private:1000000001', `admin:${OWNER_QQ}`],
+    ['agent', 'private:2000000001', `agent:${BOT}:private:${ALOYE}`],
+    ['admin', 'private:2000000001', `admin:${ALOYE}`],
     ['world', 'group:3000000003', `world:${BOT}`],
-    ['world', 'private:1000000001', `world:${BOT}`],
+    ['world', 'private:2000000001', `world:${BOT}`],
   ] as const)('%s + %s → %s', (mode, channelSpec, expected) => {
     const [kind, id] = channelSpec.split(':') as ['group' | 'private', string]
     const channel = kind === 'group' ? ({ kind: 'group', groupId: id } as const) : ({ kind: 'private', userId: id } as const)
@@ -41,19 +41,19 @@ describe('sessionIdFor —— 记忆写回的粒度（spec §6.5）', () => {
   })
 
   it('admin 的 session 按【人】切而不按 bot 账号 —— 换账号不该换她的记忆', () => {
-    const onBot1 = sessionIdFor('admin', '111', { kind: 'private', userId: OWNER_QQ })
-    const onBot2 = sessionIdFor('admin', '222', { kind: 'private', userId: OWNER_QQ })
+    const onBot1 = sessionIdFor('admin', '111', { kind: 'private', userId: ALOYE })
+    const onBot2 = sessionIdFor('admin', '222', { kind: 'private', userId: ALOYE })
     expect(onBot1).toBe(onBot2)
   })
 
   it('world 是单一天然会话流，不按频道切', () => {
     const g = sessionIdFor('world', BOT, { kind: 'group', groupId: '1' })
-    const p = sessionIdFor('world', BOT, { kind: 'private', userId: OWNER_QQ })
+    const p = sessionIdFor('world', BOT, { kind: 'private', userId: ALOYE })
     expect(g).toBe(p)
   })
 
   it('三种模式的 session 互不冲突', () => {
-    const channel = { kind: 'private', userId: OWNER_QQ } as const
+    const channel = { kind: 'private', userId: ALOYE } as const
     const ids = new Set([
       sessionIdFor('agent', BOT, channel),
       sessionIdFor('admin', BOT, channel),
@@ -69,7 +69,7 @@ function trigger(over: Partial<TriggerInput> = {}): TriggerInput {
   return {
     knownAccount: true,
     channel: { kind: 'group', groupId: '3000000003' },
-    senderId: OWNER_QQ,
+    senderId: ALOYE,
     selfId: BOT,
     at: [],
     atAll: false,
@@ -81,7 +81,7 @@ function trigger(over: Partial<TriggerInput> = {}): TriggerInput {
 
 describe('decideTrigger —— 私聊一律回应', () => {
   it('私聊（对方不是自己）→ 回应', () => {
-    const d = decideTrigger(trigger({ channel: { kind: 'private', userId: OWNER_QQ } }))
+    const d = decideTrigger(trigger({ channel: { kind: 'private', userId: ALOYE } }))
     expect(d).toEqual({ respond: true, reason: 'private' })
   })
 
@@ -116,7 +116,7 @@ describe('decideTrigger —— 群聊只在被 @ 时回应', () => {
   })
 
   it('groupTrigger=never 不影响私聊', () => {
-    const d = decideTrigger(trigger({ channel: { kind: 'private', userId: OWNER_QQ }, groupTrigger: 'never' }))
+    const d = decideTrigger(trigger({ channel: { kind: 'private', userId: ALOYE }, groupTrigger: 'never' }))
     expect(d.respond).toBe(true)
   })
 })
@@ -183,34 +183,34 @@ describe('renderInbound', () => {
     expect(
       renderInbound({
         channel: { kind: 'group', groupId: '3000000003' },
-        senderId: OWNER_QQ,
+        senderId: ALOYE,
         senderName: '鹤',
         text: '游戏好玩',
       }),
-    ).toBe('[群 3000000003 · 鹤(1000000001)] 游戏好玩')
+    ).toBe('[群 3000000003 · 鹤(2000000001)] 游戏好玩')
   })
 
   it('私聊带 [私聊 · …] 前缀', () => {
     expect(
-      renderInbound({ channel: { kind: 'private', userId: OWNER_QQ }, senderId: OWNER_QQ, senderName: 'owner', text: '在吗' }),
-    ).toBe('[私聊 · owner(1000000001)] 在吗')
+      renderInbound({ channel: { kind: 'private', userId: ALOYE }, senderId: ALOYE, senderName: 'aoye', text: '在吗' }),
+    ).toBe('[私聊 · aoye(2000000001)] 在吗')
   })
 
   it('昵称缺失时只用 id（sender 是尽力而为的字段）', () => {
     expect(
-      renderInbound({ channel: { kind: 'private', userId: OWNER_QQ }, senderId: OWNER_QQ, text: '在吗' }),
-    ).toBe('[私聊 · 1000000001] 在吗')
+      renderInbound({ channel: { kind: 'private', userId: ALOYE }, senderId: ALOYE, text: '在吗' }),
+    ).toBe('[私聊 · 2000000001] 在吗')
   })
 })
 
 describe('buildReply', () => {
   it('群回复带 at 段指向发送者（QQ 常规礼仪）', () => {
-    const r = buildReply({ kind: 'group', groupId: '3000000003' }, '嗯，我看过了', { atSender: OWNER_QQ })
+    const r = buildReply({ kind: 'group', groupId: '3000000003' }, '嗯，我看过了', { atSender: ALOYE })
     expect(r.action).toBe('send_group_msg')
     expect(r.params).toEqual({
       group_id: 3000000003,
       message: [
-        { type: 'at', data: { qq: OWNER_QQ } },
+        { type: 'at', data: { qq: ALOYE } },
         { type: 'text', data: { text: ' 嗯，我看过了' } },
       ],
     })
@@ -222,15 +222,15 @@ describe('buildReply', () => {
   })
 
   it('私聊用 send_private_msg，且不带 at', () => {
-    const r = buildReply({ kind: 'private', userId: OWNER_QQ }, '在的', { atSender: OWNER_QQ })
+    const r = buildReply({ kind: 'private', userId: ALOYE }, '在的', { atSender: ALOYE })
     expect(r.action).toBe('send_private_msg')
-    expect(r.params).toEqual({ user_id: Number(OWNER_QQ), message: [{ type: 'text', data: { text: '在的' } }] })
+    expect(r.params).toEqual({ user_id: Number(ALOYE), message: [{ type: 'text', data: { text: '在的' } }] })
   })
 
   it('群号 / QQ 号被转成数字（规范要求 number）', () => {
     const g = buildReply({ kind: 'group', groupId: '3000000003' }, 'x')
     expect(typeof g.params.group_id).toBe('number')
-    const p = buildReply({ kind: 'private', userId: OWNER_QQ }, 'x')
+    const p = buildReply({ kind: 'private', userId: ALOYE }, 'x')
     expect(typeof p.params.user_id).toBe('number')
   })
 })

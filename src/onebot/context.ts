@@ -30,9 +30,12 @@ export interface SpokenLine {
  */
 export class RecentChat {
   private readonly buckets = new Map<string, SpokenLine[]>()
+  private readonly limit: number
 
   /** @param limit 每个桶留几条（<= 0 视为不记） */
-  constructor(private readonly limit: number) {}
+  constructor(limit: number) {
+    this.limit = limit
+  }
 
   push(key: string, line: SpokenLine): void {
     if (this.limit <= 0) return

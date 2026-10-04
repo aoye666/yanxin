@@ -70,7 +70,7 @@ async function makeCtx(options: { persisted?: boolean } = {}) {
   }
 
   const agent = {
-    session: { id: 'world:2000000002' },
+    session: { id: 'world:3000000001' },
     followup: (message: unknown) => calls.followups.push(message),
     whenIdle: async () => undefined,
   }
@@ -100,10 +100,10 @@ async function makeCtx(options: { persisted?: boolean } = {}) {
   })
   provide('sessions', { flush: async () => void (calls.flushed += 1) })
   provide('agentDefaultModel', {
-    currentSelection: () => ({ provider: 'example-llm', model: 'example-model-b' }),
+    currentSelection: () => ({ provider: 'agnes', model: 'agnes-3.0-flash' }),
   })
   provide('sessionPersistence', {
-    list: async () => (options.persisted === true ? [{ id: 'world:2000000002' }] : []),
+    list: async () => (options.persisted === true ? [{ id: 'world:3000000001' }] : []),
   })
 
   // 子 Context：与世界引擎那一行同形（不 inject 任何东西）
@@ -143,7 +143,7 @@ function guardedCtx(): Context {
 describe('T27b-3 —— 真 Context 上的 decide（⚠️ 这一条堵的是 inject 那个洞）', () => {
   it('⭐ 不抛错，且真的驱动了她的会话（新会话路径）', async () => {
     const { ctx, calls } = await makeCtx()
-    const { decide } = createLifeDecide({ ctx, account: '2000000002', warn: () => {} })
+    const { decide } = createLifeDecide({ ctx, account: '3000000001', warn: () => {} })
 
     const result = await decide(turn())
 
@@ -158,7 +158,7 @@ describe('T27b-3 —— 真 Context 上的 decide（⚠️ 这一条堵的是 in
 
   it('磁盘上有日志 → resume（不撞 id collision）', async () => {
     const { ctx, calls } = await makeCtx({ persisted: true })
-    const { decide } = createLifeDecide({ ctx, account: '2000000002', warn: () => {} })
+    const { decide } = createLifeDecide({ ctx, account: '3000000001', warn: () => {} })
 
     await decide(turn())
 
@@ -168,7 +168,7 @@ describe('T27b-3 —— 真 Context 上的 decide（⚠️ 这一条堵的是 in
 
   it('第二次调用复用同一个会话（不重复 create/resume）', async () => {
     const { ctx, calls } = await makeCtx()
-    const { decide } = createLifeDecide({ ctx, account: '2000000002', warn: () => {} })
+    const { decide } = createLifeDecide({ ctx, account: '3000000001', warn: () => {} })
 
     await decide(turn())
     await decide(turn())
@@ -185,7 +185,7 @@ describe('T27b-3 —— 真 Context 上的 decide（⚠️ 这一条堵的是 in
       child = ctx
     })
     const warns: string[] = []
-    const { decide } = createLifeDecide({ ctx: child as Context, account: '2000000002', warn: (message) => warns.push(message) })
+    const { decide } = createLifeDecide({ ctx: child as Context, account: '3000000001', warn: (message) => warns.push(message) })
 
     expect(await decide(turn())).toBeNull()
     expect(await decide(turn())).toBeNull()
@@ -198,9 +198,9 @@ describe('T27b-3 —— 真 Context 上的 decide（⚠️ 这一条堵的是 in
     // `cannot get property "agents" without inject`。修好之后这里必须能跑到底。
     const { services, calls } = await makeCtx()
     const resolved = await resumeOrCreateAgent(guardedCtx(), services, {
-      sessionId: 'world:2000000002',
+      sessionId: 'world:3000000001',
       presetId: 'xiaoyan-world',
-      agentOptions: { provider: 'example-llm', model: 'example-model-b' },
+      agentOptions: { provider: 'agnes', model: 'agnes-3.0-flash' },
     })
 
     expect(resolved.persisted).toBe(false)

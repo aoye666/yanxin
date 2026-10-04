@@ -14,7 +14,7 @@ import type { ClientRole } from '../../src/onebot/protocol.ts'
 import MemorySettings from '../support/memory-settings.ts'
 import { FakeOneBot, groupMessageEvent } from '../support/fake-onebot.ts'
 
-const BOT = '2000000002'
+const BOT = '3000000001'
 const OTHER_BOT = '3999999999'
 const TOKEN = 'example-onebot-token-1234'
 const PATH = '/onebot/v11'

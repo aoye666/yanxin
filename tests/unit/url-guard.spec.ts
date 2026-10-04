@@ -24,6 +24,7 @@ describe('A) checkUrl：应当放行的公网地址', () => {
     'https://example.com/',
     'http://example.com/a',
     'https://example.com:443/ok',
+    'https://api.suotianyi.top/v1/models',
     // IPv6 公网字面量（不走 DNS，离线也稳）
     'http://[2606:4700:4700::1111]/',
     'http://[2001:4860:4860::8888]/dns-query',

@@ -12,8 +12,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import AdminService from '../../src/admin/index.ts'
 import MemorySettings from '../support/memory-settings.ts'
 
-const OWNER_QQ = '1000000001'
-const OTHER = '2000000002'
+const ALOYE = '2000000001'
+const OTHER = '3000000001'
 
 const opened: Context[] = []
 
@@ -38,7 +38,7 @@ describe('AdminService —— 接线', () => {
 
   it('⚠️ 空名单经服务仍 fail-closed', async () => {
     const ctx = await makeCtx()
-    for (const candidate of [OWNER_QQ, OTHER, '', undefined, 123]) {
+    for (const candidate of [ALOYE, OTHER, '', undefined, 123]) {
       expect(ctx.admin.isAdmin(candidate), JSON.stringify(candidate)).toBe(false)
     }
   })
@@ -47,27 +47,27 @@ describe('AdminService —— 接线', () => {
 describe('AdminService —— 增删与持久化', () => {
   it('add 后 isAdmin 为真，且 get 反映新值', async () => {
     const ctx = await makeCtx()
-    await ctx.admin.add(OWNER_QQ)
-    expect(ctx.admin.admins).toEqual([OWNER_QQ])
-    expect(ctx.admin.isAdmin(OWNER_QQ)).toBe(true)
+    await ctx.admin.add(ALOYE)
+    expect(ctx.admin.admins).toEqual([ALOYE])
+    expect(ctx.admin.isAdmin(ALOYE)).toBe(true)
     expect(ctx.admin.isAdmin(OTHER)).toBe(false)
   })
 
   it('重复 add 不产生重复项', async () => {
     const ctx = await makeCtx()
-    await ctx.admin.add(OWNER_QQ)
-    await ctx.admin.add(OWNER_QQ)
-    await ctx.admin.add(` ${OWNER_QQ} `) // 带空白也应去重
-    expect(ctx.admin.admins).toEqual([OWNER_QQ])
+    await ctx.admin.add(ALOYE)
+    await ctx.admin.add(ALOYE)
+    await ctx.admin.add(` ${ALOYE} `) // 带空白也应去重
+    expect(ctx.admin.admins).toEqual([ALOYE])
   })
 
   it('remove 后 isAdmin 为假；移除不存在项是空操作', async () => {
     const ctx = await makeCtx()
-    await ctx.admin.add(OWNER_QQ)
+    await ctx.admin.add(ALOYE)
     await ctx.admin.add(OTHER)
-    await ctx.admin.remove(OWNER_QQ)
+    await ctx.admin.remove(ALOYE)
     expect(ctx.admin.admins).toEqual([OTHER])
-    expect(ctx.admin.isAdmin(OWNER_QQ)).toBe(false)
+    expect(ctx.admin.isAdmin(ALOYE)).toBe(false)
 
     await ctx.admin.remove('999')
     expect(ctx.admin.admins).toEqual([OTHER])
@@ -75,18 +75,18 @@ describe('AdminService —— 增删与持久化', () => {
 
   it('名单变更会写入 settings 文档（不是只留在内存里）', async () => {
     const ctx = await makeCtx()
-    await ctx.admin.add(OWNER_QQ)
+    await ctx.admin.add(ALOYE)
     const provider = ctx.settings as unknown as { snapshot(): Record<string, unknown> }
     expect(provider.snapshot()).toHaveProperty('yanxin-admin')
-    expect(provider.snapshot()['yanxin-admin']).toEqual({ admins: [OWNER_QQ] })
+    expect(provider.snapshot()['yanxin-admin']).toEqual({ admins: [ALOYE] })
   })
 
   it('清空全部管理员后回到 fail-closed', async () => {
     const ctx = await makeCtx()
-    await ctx.admin.add(OWNER_QQ)
-    await ctx.admin.remove(OWNER_QQ)
+    await ctx.admin.add(ALOYE)
+    await ctx.admin.remove(ALOYE)
     expect(ctx.admin.admins).toEqual([])
-    expect(ctx.admin.isAdmin(OWNER_QQ)).toBe(false)
+    expect(ctx.admin.isAdmin(ALOYE)).toBe(false)
   })
 })
 
@@ -98,13 +98,13 @@ describe('AdminService —— 变更事件', () => {
       seen.push([...admins])
     })
 
-    await ctx.admin.add(OWNER_QQ)
+    await ctx.admin.add(ALOYE)
     await ctx.admin.add(OTHER)
 
     // watch 的回调是异步的（文档：invocations run asynchronously, one at a time, in commit order）
     await new Promise((r) => setTimeout(r, 50))
 
     expect(seen.length).toBeGreaterThanOrEqual(1)
-    expect(seen.at(-1)).toEqual([OWNER_QQ, OTHER])
+    expect(seen.at(-1)).toEqual([ALOYE, OTHER])
   })
 })

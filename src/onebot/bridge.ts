@@ -48,7 +48,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { resumeOrCreateAgent } from './agent-session.ts'
 import { RecentChat, renderRecent, withContext } from './context.ts'
 import { MessageStats } from './stats.ts'
-import { normalizeMessage } from './message.ts'
+import { normalizeMessage, type Segment } from './message.ts'
+import { renderInboundText } from './forward.ts'
+import { planReply, clipTotal, REPLY_STRIP_QUOTES_DEFAULT, type MixedLinePolicy } from './segments.ts'
 import type { EventFrame } from './protocol.ts'
 import { qqSource } from './provenance.ts'
 import { readSessionEvents } from './session-api.ts'
@@ -121,7 +123,32 @@ const ConfigSchema = z.object({
     .description('只记日志不真发。首次上线或调试时用它可以先看小研会怎么回，不发到 QQ。'),
   cwd: z.string().description('agent 的工作目录。缺省用进程 cwd。'),
   model: z.string().description('覆盖默认模型（缺省用 agentDefaultModel 的当前选择）。'),
-  maxReplyChars: z.natural().default(2000).description('回复长度上限，超出截断。'),
+  maxReplyChars: z
+    .natural()
+    .default(2000)
+    .description('一条回复的**总长**上限（超出截断）。分段后它是总额，单条上限看 maxReplyCharsPerSegment。'),
+  maxReplySegments: z
+    .natural()
+    .default(4)
+    .description('一条回复最多拆成几条 QQ 消息；超出的部分**并进最后一条**（不是丢掉）。'),
+  maxReplyCharsPerSegment: z
+    .natural()
+    .default(200)
+    .description('单条消息的长度上限。QQ 实收约 500 字，这里留余量。'),
+  replySegmentGapMs: z
+    .natural()
+    .default(600)
+    .description('拆成多条时，两条之间隔多少毫秒（0 = 连着发）。'),
+  stripReplyQuotes: z
+    .boolean()
+    .default(REPLY_STRIP_QUOTES_DEFAULT)
+    .description('去掉引号行最外层那对直引号 —— 它只是分段边界，不是她想说的话。'),
+  replyMixedLines: z
+    .union(['keep-all', 'quoted-only'] as const)
+    .default('keep-all')
+    .description(
+      '引号行与裸行混在一起时：keep-all = 裸行也发（排在后面，不丢内容）；quoted-only = 只发引号行（裸行当独白吞掉）。',
+    ),
 })
 
 interface Config {
@@ -134,6 +161,11 @@ interface Config {
   cwd?: string
   model?: string
   maxReplyChars: number
+  maxReplySegments: number
+  maxReplyCharsPerSegment: number
+  replySegmentGapMs: number
+  stripReplyQuotes: boolean
+  replyMixedLines: MixedLinePolicy
 }
 
 /** 从事件里安全地读出我们需要的字段。 */
@@ -146,6 +178,8 @@ interface InboundMessage {
   at: string[]
   atAll: boolean
   raw: string
+  /** 归一化后的消息段（转发展开要按段走，见 `forward.ts`）。 */
+  segments: Segment[]
 }
 
 function readInbound(frame: EventFrame): InboundMessage | undefined {
@@ -171,6 +205,7 @@ function readInbound(frame: EventFrame): InboundMessage | undefined {
       at: normalized.at,
       atAll: normalized.atAll,
       raw: normalized.raw,
+      segments: normalized.segments,
     }
   }
 
@@ -184,6 +219,7 @@ function readInbound(frame: EventFrame): InboundMessage | undefined {
       at: normalized.at,
       atAll: normalized.atAll,
       raw: normalized.raw,
+      segments: normalized.segments,
     }
   }
 
@@ -205,6 +241,9 @@ export default class OneBotBridge extends Service {
   /** sessionId → 该会话的串行队列尾。 */
   private readonly queues = new Map<string, Promise<void>>()
 
+  /** 在飞的入站事件数（从 listener 进门记到整条链路落定）。 */
+  private inFlight = 0
+
   /**
    * 已经回过"还没初始化"的频道（`group:<gid>` / `private:<uid>`）。
    *
@@ -222,12 +261,14 @@ export default class OneBotBridge extends Service {
   private readonly recent: RecentChat
   /** 消息统计（SQLite）。`undefined` = stats 关掉或库打不开 —— 收发照常，仪表盘显示"没有数据"。 */
   private readonly stats: MessageStats | undefined
+  private readonly config: Config
 
   constructor(
     ctx: Context,
-    private readonly config: Config,
+    config: Config,
   ) {
     super(ctx, 'onebot-bridge')
+    this.config = config
     this.recent = new RecentChat(this.config.contextMessages)
 
     // 统计库（控制台仪表盘的数据源）。打不开只 warn —— 统计是旁路，聊天不能等它。
@@ -245,7 +286,12 @@ export default class OneBotBridge extends Service {
     ctx.effect(
       () =>
         ctx.on('onebot/event', (frame) => {
-          void this.onEvent(frame)
+          // 记账从**进门**就开始：`onEvent` 要先 await 守卫那一道门才落到 `enqueue`，
+          // 只数队列的话 `drainQueues` 会跑在入队之前，排空排了个寂寞。
+          this.inFlight += 1
+          void this.onEvent(frame).finally(() => {
+            this.inFlight -= 1
+          })
         }),
       'yanxin-bridge.listener',
     )
@@ -281,6 +327,17 @@ export default class OneBotBridge extends Service {
 
     const inbound = readInbound(frame)
     if (!inbound) return
+
+    // 合并转发：把正文换成"谁在什么时候说了什么"。放在**群聊缓冲与触发判定之前** ——
+    // 转发里的话也是她听见的话。拉不到时 `renderInboundText` 自己留 `[forward]` 并 warn，
+    // 整条消息不会因此被丢掉（那是最难查的一种静默）。
+    if (inbound.segments.some((seg) => seg.kind === 'forward')) {
+      inbound.text = await renderInboundText(
+        (action, params) => this.ctx.onebot.call(frame.selfId, action, params),
+        inbound.segments,
+        (message) => this.log('warn', message),
+      )
+    }
 
     const mode = this.modeFor(inbound)
     // ⚠️ 缓冲必须喂在**决策之前**：闸门默认丢掉未被 @ 的消息，先判断再存的话，
@@ -359,6 +416,33 @@ export default class OneBotBridge extends Service {
       // 只在链尾仍是自己时删除，避免误删后来者的链
       if (this.queues.get(key) === next) this.queues.delete(key)
     })
+  }
+
+  /**
+   * 等**已入队**的回合全部跑完（新到的消息由调用方自己负责）。
+   *
+   * 为什么要有这个方法：入站是 `ctx.emit('onebot/event', …)`，而 emit **不返回 promise** ——
+   * 于是"这一串异步工作做完没有"从外面根本观察不到。测试原先靠"排几个宏任务"猜，
+   * 可这条链路里有**真的在睡**的步骤（分段间隔 `replySegmentGapMs`、`whenIdle`），
+   * 猜就会在半条链路上放行断言（2026-10-05 开发副本与公开副本各红一条就是这个）。
+   * 队列的本体在这儿，所以由它来答"排空了没有"。
+   */
+  async drainQueues(timeoutMs = 20_000): Promise<void> {
+    const awaited = new Set<Promise<void>>()
+    const started = Date.now()
+    for (;;) {
+      if (this.inFlight === 0 && this.queues.size === 0) return
+      const pending = [...this.queues.values()].filter((entry) => !awaited.has(entry))
+      if (pending.length > 0) {
+        for (const entry of pending) awaited.add(entry)
+        // 链上每个环节自己已经 catch 过；这里再兜一层，防某条链抛出把整个排空拖垮
+        await Promise.all(pending.map((entry) => entry.catch(() => undefined)))
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 2))
+      }
+      // 超时不抛：让调用方的断言去报"只看到半条链路"，比这里冒一个技术性的 timeout 更好查
+      if (Date.now() - started > timeoutMs) return
+    }
   }
 
   // ── 一轮对话 ────────────────────────────────────────────────────────
@@ -481,36 +565,78 @@ export default class OneBotBridge extends Service {
   private trim(text: string): string {
     const limit = this.config.maxReplyChars
     if (text.length <= limit) return text
+    // ⚠️ 不能 `text.slice(0, limit)`：那会把 `[CQ:image,file=…]` 从中间切断，
+    //    发出去就是一串乱码字。按 CQ 原子裁（口径与分段器一致）。
     this.log('warn', `回复长度 ${text.length} 超过上限 ${limit}，已截断`)
-    return text.slice(0, limit)
+    return clipTotal(text, limit)
   }
 
-  /** 投递。`dryRun` 时只记日志。 */
+  /**
+   * 投递。一条回复可能被拆成**多条**（见 `segments.ts`）。
+   *
+   * 三条语义：
+   *   · `dryRun` 时**一条都不真发**，但日志要看得出共几条、每条是什么 —— 否则调试时
+   *     "她会发什么"这件事反而比真发更难看清
+   *   · 某条失败**不整体重发**：前面的已经出去了，重发就是重复刷屏。继续发剩下的，
+   *     最后给一条汇总（失败条数只有汇总起来才看得出严重程度）
+   *   · 群里要 @ 对方时**只有第一条带** —— 每条都 @ 是骚扰
+   */
   private async deliver(selfId: string, inbound: InboundMessage, text: string): Promise<void> {
-    const target = buildReply(inbound.channel, text, {
-      // 群里带上 at，让对方知道这句话在回他
-      atSender: inbound.channel.kind === 'group' ? inbound.senderId : undefined,
+    const plan = planReply(text, {
+      maxSegments: this.config.maxReplySegments,
+      maxCharsPerSegment: this.config.maxReplyCharsPerSegment,
+      stripQuotes: this.config.stripReplyQuotes,
+      mixed: this.config.replyMixedLines,
     })
+    const total = plan.messages.length
+    if (plan.mergedOverflow) {
+      this.log('warn', `回复拆出 ${total} 条以上，尾部已并进最后一条（上限 ${this.config.maxReplySegments}）`)
+    }
+    const atSender = inbound.channel.kind === 'group' ? inbound.senderId : undefined
 
     if (this.config.dryRun) {
-      this.log('info', `[dryRun] 本应发到 ${target.describe}：${text}`)
+      for (const [index, message] of plan.messages.entries()) {
+        const target = buildReply(inbound.channel, message, {
+          atSender: index === 0 ? atSender : undefined,
+        })
+        this.log('info', `[dryRun] 本应发到 ${target.describe}（第 ${index + 1}/${total} 条）：${message}`)
+      }
       return
     }
 
-    try {
-      await this.ctx.onebot.call(selfId, target.action, target.params)
-      this.log('info', `→ ${target.describe}：${text}`)
-      // 发送成功才算"她说了话"（失败不是 —— 那是"她想说了但没说出去"）
-      this.stats?.record({
-        ts: Date.now(),
-        direction: 'out',
-        channel: inbound.channel.kind,
-        groupId: inbound.channel.kind === 'group' ? inbound.channel.groupId : undefined,
-        sender: inbound.channel.kind === 'group' ? inbound.channel.groupId : inbound.senderId,
-        length: text.length,
+    let sent = 0
+    let failed = 0
+    for (const [index, message] of plan.messages.entries()) {
+      if (index > 0 && this.config.replySegmentGapMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, this.config.replySegmentGapMs))
+      }
+      const target = buildReply(inbound.channel, message, {
+        atSender: index === 0 ? atSender : undefined,
       })
-    } catch (error) {
-      this.log('warn', `发往 ${target.describe} 失败：${error instanceof Error ? error.message : String(error)}`)
+      const mark = total > 1 ? `（第 ${index + 1}/${total} 条）` : ''
+      try {
+        await this.ctx.onebot.call(selfId, target.action, target.params)
+        sent += 1
+        this.log('info', `→ ${target.describe}${mark}：${message}`)
+        // 发送成功才算"她说了话"（失败不是 —— 那是"她想说了但没说出去"）
+        this.stats?.record({
+          ts: Date.now(),
+          direction: 'out',
+          channel: inbound.channel.kind,
+          groupId: inbound.channel.kind === 'group' ? inbound.channel.groupId : undefined,
+          sender: inbound.channel.kind === 'group' ? inbound.channel.groupId : inbound.senderId,
+          length: message.length,
+        })
+      } catch (error) {
+        failed += 1
+        this.log(
+          'warn',
+          `发往 ${target.describe}${mark} 失败：${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+    if (failed > 0) {
+      this.log('warn', `这条回复共 ${total} 条：发出 ${sent}、失败 ${failed}（已出去的不重发）`)
     }
   }
 
@@ -552,6 +678,40 @@ export default class OneBotBridge extends Service {
       `${resolved.persisted ? '恢复' : '新建'}会话 ${sessionId}（preset=${presetId} model=${model}）`,
     )
     return { agent: resolved.agent }
+  }
+
+  /**
+   * 释放**当前空闲**的会话句柄（控制台人格页保存后调它，让下一条消息用新的 preset）。
+   *
+   * ⚠️ 只碰状态是 `idle` 的：正在跑的那一轮被打断会留下半条会话日志，而"她说到一半换人"
+   * 比"下一句才换"糟得多。释放之后下一条消息自然走 resume（session id 是确定性的，
+   * ADR 0011），**历史不丢** —— 丢的只是内存里那个句柄，而它正是带着旧 preset 的那个。
+   *
+   * ⚠️ **必须 await 每一个 disposer 再返回**：真实 store（`core/session` 的 `prepare` /
+   * `enter`）在**任何**解析（含 resume）前先查 `store.has(id)`，撞上就抛
+   * `session "…" already exists`。先前这里是 `void entry.dispose()`，于是"保存人格 →
+   * 下一条消息"会死在那个还没摘掉的条目上 —— 2026-10-04 线上 50 次静默即为此。
+   *
+   * @returns 释放了几个（调用方拿它决定怎么告诉用户"什么时候生效"）
+   */
+  async dropIdleAgents(reason: string): Promise<number> {
+    const pending: Promise<void>[] = []
+    for (const [sessionId, entry] of [...this.agents]) {
+      if (entry.agent.status !== 'idle') continue
+      this.agents.delete(sessionId)
+      // disposer 失败只 warn：句柄已从表里摘掉，下一轮自然重建
+      pending.push(
+        entry.dispose().catch((error: unknown) => {
+          this.log(
+            'warn',
+            `释放会话 ${sessionId} 的句柄时出错（${reason}）：${error instanceof Error ? error.message : String(error)}`,
+          )
+        }),
+      )
+    }
+    await Promise.all(pending)
+    if (pending.length > 0) this.log('info', `已释放 ${pending.length} 个空闲会话句柄（${reason}）`)
+    return pending.length
   }
 
   private log(level: 'info' | 'warn', message: string): void {

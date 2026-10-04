@@ -26,19 +26,10 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-/**
- * monorepo 位置**只从环境变量来**：`YANXIN_DSH_MONOREPO=<DSH 检出目录>`。
- *
- * 为什么不写死默认路径，也不改成本地 `node_modules` 里那份已发布的包：
- *   · 写死 = 在别人机器上永远指着一个不存在的目录，skip 得有理由，而"忘了设"不是理由；
- *   · 引 `@deepseek-ai/cordis-plugin-include` 会让 pnpm 装出**第二份 cordis**（它钉 ~4.0.4，
- *     而 `dsh-*` 钉 4.0.2），同进程两份 cordis 会让 symbols 身份判定全错 —— 见 spec §9 Never。
- * 没设这个变量时整组 skip：这组断言的对象是**上游** `applyEntryPatches` 的行为，
- * 本地没有上游源码就没得断言，跳过比假装通过诚实。
- */
-const MONOREPO = process.env.YANXIN_DSH_MONOREPO ?? ''
-const PATCH_SOURCE = MONOREPO === '' ? '' : join(MONOREPO, 'vendor', 'include', 'src', 'index.ts')
-const HAS_SOURCE = PATCH_SOURCE !== '' && existsSync(PATCH_SOURCE)
+/** monorepo 位置：默认本机路径，可用环境变量覆盖（别的机器/CI 上设它）。 */
+const MONOREPO = process.env.YANXIN_DSH_MONOREPO ?? 'E:/project/cc/deepseek-harness'
+const PATCH_SOURCE = join(MONOREPO, 'vendor', 'include', 'src', 'index.ts')
+const HAS_SOURCE = existsSync(PATCH_SOURCE)
 
 /** patch 应用函数的最小签名（类型来自 monorepo 源码，不引它的包）。 */
 type ApplyPatches = (

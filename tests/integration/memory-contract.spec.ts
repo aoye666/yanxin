@@ -60,9 +60,9 @@ function contractSuite(name: string, harness: ProviderHarness): void {
     })
 
     it('召回有结果：返回 `MemoryHit[]`，每条都有 `content` 与 `source`', async () => {
-      const ctx = await ctxWith(await harness.ok(['记得你熬夜', '记得你喜欢 某部番剧']))
+      const ctx = await ctxWith(await harness.ok(['记得你熬夜', '记得你喜欢 MyGO']))
 
-      const hits = await ctx.memory.search('主人')
+      const hits = await ctx.memory.search('爸爸')
 
       expect(Array.isArray(hits)).toBe(true)
       expect(hits.length).toBeGreaterThan(0)
@@ -112,7 +112,7 @@ function contractSuite(name: string, harness: ProviderHarness): void {
               { role: 'assistant', content: '在的' },
             ],
           },
-          'agent:2000000002:group:3000000003',
+          'agent:3000000001:group:3000000003',
         ),
       ).resolves.toBeUndefined()
     })

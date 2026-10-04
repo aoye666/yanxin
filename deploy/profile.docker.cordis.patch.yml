@@ -1,0 +1,149 @@
+# 研心 / YanXin —— Docker 形态的 profile patch（由 docker/entrypoint.mjs 渲染）
+#
+# 这一份与 `deploy/profile.example.cordis.patch.yml` **覆盖同一批行**，差别只有三处，
+# 每处为什么不同都写在它自己头上；两边的差异由
+# `tests/unit/deploy-profile.spec.ts` 钉着（少一段或多一段都会红）。
+#
+# ⚠️ 两条会咬人的规则（与本机版同源，spec §6.2）：
+#   · **patch 没有深度合并**：覆盖某一行的 config 就是**整字段替换**，所以每段都写完整。
+#   · 行 id 打错**不报错**：装配按 id 匹配，对不上就是静默不生效（那次"非回环 bash"的
+#     漏洞就是这个形状，见下面 shell 那一节）。
+#
+# 本文件**不含任何密钥**：token / API key 全部来自环境变量（`--dump-config` 会明文打印 YAML）。
+
+# ── 控制台与页面向导的监听点 ────────────────────────────────────────────────
+# ⚠️ 容器版**多出来**的一段（本机版没有：那台机器上绑地址由 bundle patch 定死回环）。
+#
+# 为什么必须写：`web-server` 的 host 是**闭集** `127.0.0.1 | 0.0.0.0`，而容器里绑回环
+# 意味着只有容器自己打得开控制台 —— 那等于没有控制台。
+#
+# ⚠️ 绑 0.0.0.0 之后，安全就**只剩代码里那道门**：`src/console/logic.ts` 对非回环请求
+# 默认一律 403，只有环境变量 `YANXIN_CONSOLE_ALLOW_REMOTE=1` 才放行（entrypoint 在
+# web host 非回环时设它，并且控制台每次启动都打一条 WARN）。写操作与实时日志流
+# 无论来源都还要 `YANXIN_CONSOLE_TOKEN`；没配 token = 一律拒（fail-closed）。
+#
+# ⚠️ 没有 TLS，也没有"启动后换绑"：要 HTTPS 请挂在反向代理后面。
+- id: web-server
+  config:
+    host: {{WEB_HOST}}
+    port: {{WEB_PORT}}
+
+# ── OneBot v11 反向 WS（我们的进程是**服务端**，NapCat/SnowLuma 来连我们）────
+# ⚠️ 差异 ①：`host: 0.0.0.0`（本机版只绑回环）。NapCat 跑在宿主机、不进镜像，
+# 连进来时来源地址是 docker 的桥接网关（`172.17.0.1` 之类）—— 那是**非回环**，
+# 所以这条端口天生就是"对外"的。
+#
+# 那条端口上没有别的东西在守：token 一空，任何能连上它的人都能**冒充她的客户端**
+# （推假事件、拿到回发目标），而 URL 守卫管不到那条路。因此 entrypoint 在
+# host 非回环且 token 为空时**拒绝启动**，不是警告。
+#
+# ⚠️ 这一整段同样只是**初值**：`host` / `port` / `path` / `token` 都能被 settings 的
+#    `yanxin-onebot` 覆盖（控制台 `/yanxin/onebot` 页改，不用重启）。
+#    改了 patch 没生效先查 settings。`accounts` 不在那个例外里 —— 它决定"这个号挂
+#    哪套能力"，属于能力构成，控制台只读显示，要改只能改这里。
+- id: onebot
+  config:
+    host: {{ONEBOT_HOST}}
+    port: {{ONEBOT_PORT}}
+    path: "{{ONEBOT_PATH}}"
+    token: "{{ONEBOT_TOKEN}}"
+    # `selfId` 与 `accounts` 由 entrypoint 整段生成（下面那行 IDENTITY_LINES 占位符）：
+    # **没绑号时不写 selfId、accounts 给空表** —— 写一条 selfId 为空的条目不是"她不知道是谁"，
+    # 而是被 cordis 的 schema 判成 `$.accounts[0].selfId missing required value`，
+    # 整个 profile 挂载失败；而首启恰恰是"还没绑号"的状态（2026-10-04 真机验收撞到）。
+    # accounts 不在 settings 的覆盖例外里：它决定"这个号挂哪套能力"，控制台只读显示。
+{{IDENTITY_LINES}}
+    pingIntervalMs: 30000
+    callTimeoutMs: 15000
+
+# ── 桥（策略层）─────────────────────────────────────────────────────────────
+# ⚠️ 这一段的键**一个都不能写到上面的 `onebot` 行里去**：那四个键（dryRun / contextMessages /
+#    groupTrigger / maxReplyChars）属于桥，而 `onebot` 行的 TransportSchema 只认
+#    host / port / path / token / pingIntervalMs / callTimeoutMs（见 src/onebot/transport.ts）。
+#    patch 既没有深度合并、行 id 对不上也**不报错** —— 写错行的症状是"配置看着在，
+#    实际一路静默落回默认值"（本文件曾把 `groupTrigger: name` 放在 onebot 段，线上就表现为
+#    名字触发完全不生效）。
+#
+# ⚠️ 三处 `cwd` 必须一致（桥 / bash / 世界引擎），这条不是风格：世界引擎的 cwd 决定
+#    内核会不会把它的工程指令混进她的内心独白（实测漏掉时她的独白里出现过
+#    "SQLite uses monotonic SCHEMA_VERSION"）。
+#    差异 ②（形态相同、值不同）：路径是容器里的 /home/node/.dsh/yanxin/workspace。
+- id: onebot-bridge
+  config:
+    cwd: "{{WORKSPACE}}"
+    # 观察她第一次怎么回话时可以先开 dryRun（只记日志不真发）。
+    dryRun: false
+    # 群里：被 @ **或**文本里出现名字都调用一次，并带上最近 contextMessages 句原话。
+    # 代价是"她可能插话"，这条由人格接住（base.md「群里提到你，不等于在叫你」）。
+    groupTrigger: name
+    contextMessages: 10
+    # 一条回复的**总长**上限；拆成几条由代码默认管（maxReplySegments=4、单条 200 字）
+    maxReplyChars: 2000
+
+# ── 管理员 shell 的落点 ─────────────────────────────────────────────────────
+# shell 的**提供者**（`@deepseek-ai/dsh-bash-local`）在 bundle patch 里，这里只覆盖部署值。
+# ⚠️ 不写这一段，shell 就落在 `process.cwd()` —— 容器里那是 `/app`，她的文件足迹会散进
+# 源码与只读装配所在的地方。三个键写全（整字段替换）。
+- id: bash
+  config:
+    cwd: "{{WORKSPACE}}"
+    timeoutMs: 120000
+    maxOutputBytes: 65536
+
+# ⚠️ 差异 ③：容器里是 Linux，base 给 `dsh-bash-sandbox` 的那道**平台门（win32）不成立** ——
+# 沙箱提供者真的会装载，并抢先把 `shell` 服务注册掉，让上面这套装配挂载失败
+# （"service \"shell\" has been registered at <SandboxPwshExecutor>"，ADR 0013 那个坑的
+# 镜像版本）。用户口径是**继续用非沙箱的 bash-local**，所以这里显式禁掉沙箱那一条
+# （写法照 bundle patch：行级开关是 `disabled: true`）。
+#
+# 说清楚代价：这一行让"容器"成为 shell 唯一的边界。镜像里跑的是本机任意代码执行能力，
+# 而且它背后那个 bot 的控制台在这一版是对远程可达的 —— 见 README 的安全一节。
+- id: bash-sandbox
+  disabled: true
+
+# ── 长期记忆：指向同容器里的 ReMe ───────────────────────────────────────────
+# ⚠️ 差异 ④，也是**最容易漏、症状最安静的一行**：`provider: reme`。
+# 代码缺省是 `none`（`src/memory/service.ts` 的 MEMORY_DEFAULTS），三级回退是
+# settings → 行 config → 缺省。于是"镜像里 ReMe 起来了"与"记忆线可用"是两件事：
+# 不写这一行，她**照常说话、召回恒空、且不记 warn**，症状只是"她记不住事"。
+#
+# ⚠️ 行 id 是 `memory`，**不是** `yanxin-memory` —— 后者是 settings 的命名空间名，
+# 装配树里没有这一行。写成那个就是静默不生效的经典错法。
+#
+# entrypoint 只有在 `POST /health_check` 通过之后才写 `reme`；等不到健康就留 `none`
+# 并打 WARN —— 记忆是增强不是依赖，起不来的时候要她还能说话。
+- id: memory
+  config:
+    provider: "{{MEMORY_PROVIDER}}"
+    endpoint: http://127.0.0.1:2333
+
+# ── 世界模型（判断/裁定那一侧）可以走**另一条 LLM 路由** ─────────────────────
+# 与本机版同理：**默认注释掉** = 沿用 settings 的 `agent-default-model`。
+# 想分开就把两个键**一起**取消注释（只写一个会撞 schema 的成对校验，整行都落不回默认）。
+# ⚠️ 填错不抛异常：429 与"模型不存在"只写在会话落盘的 finish 里，症状是"世界安静了"。
+# - id: world-model
+#   config:
+#     provider: example-llm
+#     model: example-model
+
+# ── 世界引擎：她的世界群 ───────────────────────────────────────────────────
+# bundle patch 里这一行带 `disabled: true` 的 fail-safe —— **不要在这里改成 false**：
+# 启停由窗口服务驱动（窗口打开 → 装载，关闭 → 卸载）。
+- id: yanxin-world-engine
+  config:
+    worldGroupId: "{{WORLD_GROUP_ID}}"
+    cwd: "{{WORKSPACE}}"
+
+# ── 窗口调度：她的作息 ──────────────────────────────────────────────────────
+# 与本机版一样是**有意留空的锚点**（那行没有 config 可覆盖）；想停用控制台
+# `/yanxin/world` 的暂停开关（写 settings，立即生效）。
+# ⚠️ 窗口开着 = 那段时间额度照烧。
+- id: window
+
+# ── 控制台 ──────────────────────────────────────────────────────────────────
+# console 是常驻服务（引擎卸下时控制台仍然可见可改），群号的初值挂在这里。
+- id: console
+  config:
+    worldGroupId: "{{WORLD_GROUP_ID}}"
+    # 统计库与日志路径都不写 → 走缺省（`$DSH_HOME/yanxin/stats.db`）。
+    # ⚠️ 首页仪表盘显示计数与群号；这一版控制台对远程可达，别再往公网裸暴露群号之外的东西。

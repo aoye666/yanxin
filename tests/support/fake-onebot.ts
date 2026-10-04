@@ -220,10 +220,10 @@ export function groupMessageEvent(
     sub_type: 'normal',
     message_id: options.messageId ?? 1001,
     group_id: Number(options.groupId ?? '123456'),
-    user_id: Number(options.userId ?? '1000000001'),
+    user_id: Number(options.userId ?? '2000000001'),
     message,
     raw_message: options.rawMessage ?? (typeof message === 'string' ? message : ''),
     font: 0,
-    sender: { user_id: Number(options.userId ?? '1000000001'), nickname: 'owner', role: 'owner' },
+    sender: { user_id: Number(options.userId ?? '2000000001'), nickname: 'aoye', role: 'owner' },
   }
 }

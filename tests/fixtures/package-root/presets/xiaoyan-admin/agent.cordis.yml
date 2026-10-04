@@ -1,0 +1,14 @@
+# 测试夹具，不是生成产物。
+#
+# 形状与 `scripts/build-presets.mjs` 的真产物一致：`id: persona` 那行、
+# `@deepseek-ai/dsh-persona` 这个 provider、`config.prefix` 承载人格文本。
+# 装到 `$DSH_HOME` 时 `embedPersonaText` 会把 prefix 换成有效人格 ——
+# 所以这里的占位文本本来就该被覆盖掉，别把它当内容。
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    complete: true
+    includeRuntimeContext: false
+    prefix: |-
+      （夹具占位人格 —— 安装时会被替换）

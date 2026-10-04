@@ -20,7 +20,7 @@ afterEach(async () => {
 })
 
 function entry(over: Partial<StatEntry> = {}): StatEntry {
-  return { ts: Date.now(), direction: 'in', channel: 'group', groupId: '3000000003', sender: '1000000001', ...over }
+  return { ts: Date.now(), direction: 'in', channel: 'group', groupId: '3000000003', sender: '2000000001', ...over }
 }
 
 describe('记账与聚合一一对应', () => {
@@ -30,10 +30,10 @@ describe('记账与聚合一一对应', () => {
 
     stats.record(entry())                                                    // 群里被 @（触发）
     stats.record(entry({ responded: true }))                                 // 又一条触发
-    stats.record(entry({ responded: false, sender: '2991064865' }))          // 没触发的潜水消息
+    stats.record(entry({ responded: false, sender: '2000000003' }))          // 没触发的潜水消息
     stats.record(entry({ direction: 'out' }))                                // 她的回复
     stats.record(entry({ direction: 'out' }))
-    stats.record(entry({ channel: 'private', groupId: undefined, sender: '1000000001' })) // 私聊
+    stats.record(entry({ channel: 'private', groupId: undefined, sender: '2000000001' })) // 私聊
 
     const overview = stats.overview()
     expect(overview.todayIn).toBe(4)
@@ -49,7 +49,7 @@ describe('记账与聚合一一对应', () => {
   it('自己的回声不进库是**桥的职责**，这里只保证按收到的记（不替上层过滤）', () => {
     const stats = MessageStats.open(':memory:')
     opened.push(stats)
-    stats.record(entry({ sender: '2000000002' }))
+    stats.record(entry({ sender: '3000000001' }))
     expect(stats.overview().totalIn).toBe(1)
   })
 })

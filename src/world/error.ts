@@ -77,12 +77,17 @@ export interface KernelDiagnostic {
  * `VALIDATION_FAILED` 是业务规则（可修正后重提），`INVALID_JSON` 是数据形态问题（更基础）。
  */
 export class KernelError extends Error {
+  readonly code: string
+  readonly details?: KernelDiagnostic[]
+
   constructor(
-    readonly code: string,
+    code: string,
     message: string,
-    readonly details?: KernelDiagnostic[],
+    details?: KernelDiagnostic[],
   ) {
     super(message)
+    this.code = code
+    this.details = details
     this.name = 'KernelError'
   }
 

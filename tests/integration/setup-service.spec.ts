@@ -25,7 +25,11 @@ import { personaDir, presetRoot, setupFile, worldDir } from '../../src/setup/ins
 import { SetupError, type SetupStatus } from '../../src/setup/types.ts'
 import type { CallWorldModel } from '../../src/world/arbiter.ts'
 
-const PACKAGE_ROOT = join(import.meta.dirname, '..', '..')
+// 夹具包根（填好的小 persona + 三个形状正确的 preset）。
+// ⚠️ 不是本仓目录：本仓 `persona/` 在公开副本里是出厂空模板，向导据此判"还没人格"，
+//   于是"从零走完四步"那整组在公开包上必红 —— 测试验的是**安装机制**，不该依赖这份包
+//   有没有真内容（2026-10-05 同步公开副本时 14 条红在这）。
+const PACKAGE_ROOT = join(import.meta.dirname, '..', 'fixtures', 'package-root')
 
 /** 换行符：写成常量是为了让"按行比"的断言不必在字符串里塞真的换行（否则很容易写坏）。 */
 const NEWLINE = String.fromCharCode(10)
@@ -115,7 +119,7 @@ describe('T28 —— 从零走完：每步都真的落下东西', () => {
     expect(presets).toEqual(['xiaoyan-admin', 'xiaoyan-agent', 'xiaoyan-world'])
     const worldYml = await readFile(join(presetRoot(home), 'xiaoyan-world', 'agent.cordis.yml'), 'utf8')
     const worldDoc = await readFile(join(PACKAGE_ROOT, 'persona', 'world.md'), 'utf8')
-    // ⚠️ 世界文档被**缩进**进 YAML 块标量（`text: |-`），所以按"去掉首尾空格后的整行"比 ——
+    // ⚠️ 世界文档被**缩进**进 YAML 块标量（`prefix: |-`），所以按"去掉首尾空格后的整行"比 ——
     // 直接 `toContain(全文)` 会因为缩进而假失败
     const ymlLines = new Set(worldYml.split(NEWLINE).map((line) => line.trim()))
     for (const line of worldDoc
@@ -142,11 +146,11 @@ describe('T28 —— 从零走完：每步都真的落下东西', () => {
 
   it('accounts 步：选定她的 QQ 号才算完成（要在注册表里）', async () => {
     const home = await makeHome()
-    const setup = startService(home, fakeOneBot(['2000000002'], ['2000000002']))
+    const setup = startService(home, fakeOneBot(['3000000001'], ['3000000001']))
     await runPersonaAndBackground(setup)
 
     // 世界还没接线（T29），所以现在状态停在 background —— accounts 还不能跑
-    await expect(setup.run('accounts', { accountId: '2000000002' })).rejects.toThrow(SetupError)
+    await expect(setup.run('accounts', { accountId: '3000000001' })).rejects.toThrow(SetupError)
   })
 
   it('落盘：setup.json 有版本、已完成步骤与选定值（人能读）', async () => {
@@ -208,14 +212,14 @@ describe('T28 —— 反证：记录与现场不符时必须退回', () => {
       JSON.stringify({
         schemaVersion: 1,
         completed: ['persona', 'background', 'world', 'accounts'],
-        accountId: '2000000002',
+        accountId: '3000000001',
         selfId: 'yanxin',
         updatedAt: Date.now(),
       }),
       'utf8',
     )
 
-    const setup = startService(home, fakeOneBot(['2000000002'], ['2000000002']))
+    const setup = startService(home, fakeOneBot(['3000000001'], ['3000000001']))
     const progress = await setup.progress()
 
     expect(progress.status).toBe('init') // 不是 ready！
@@ -274,7 +278,7 @@ describe('T28 —— accounts 的证据来自 onebot（软依赖）', () => {
     setup.worldModel = scriptedModel()
     await runPersonaAndBackground(setup)
     await setup.run('world')
-    await expect(setup.run('accounts', { accountId: '2000000002' })).rejects.toThrow(SetupError)
+    await expect(setup.run('accounts', { accountId: '3000000001' })).rejects.toThrow(SetupError)
 
     const progress = await setup.progress()
     const accounts = progress.steps.find((state) => state.step === 'accounts')
@@ -289,11 +293,11 @@ describe('T28 —— accounts 的证据来自 onebot（软依赖）', () => {
     // 记录里已经选定了 QQ 号（等价于"accounts 步跑过了"）
     await writeFile(
       setupFile(home),
-      JSON.stringify({ schemaVersion: 1, completed: [], accountId: '2000000002', updatedAt: Date.now() }),
+      JSON.stringify({ schemaVersion: 1, completed: [], accountId: '3000000001', updatedAt: Date.now() }),
       'utf8',
     )
 
-    const setup = startService(home, fakeOneBot(['2000000002'])) // 注册了，但 connected 为空
+    const setup = startService(home, fakeOneBot(['3000000001'])) // 注册了，但 connected 为空
     const progress = await setup.progress()
 
     const accounts = progress.steps.find((state) => state.step === 'accounts')
@@ -305,7 +309,7 @@ describe('T28 —— accounts 的证据来自 onebot（软依赖）', () => {
 describe('T29 —— 世界步接上之后：四步走完到 ready', () => {
   it('⭐ 从零走完：persona → background → world → accounts → ready', async () => {
     const home = await makeHome()
-    const setup = startService(home, fakeOneBot(['2000000002'], ['2000000002']))
+    const setup = startService(home, fakeOneBot(['3000000001'], ['3000000001']))
     setup.worldModel = scriptedModel()
 
     await setup.run('persona')
@@ -314,7 +318,7 @@ describe('T29 —— 世界步接上之后：四步走完到 ready', () => {
     expect(world.status).toBe('world')
     expect(world.detail).toContain('创世')
 
-    const done = await setup.run('accounts', { accountId: '2000000002' })
+    const done = await setup.run('accounts', { accountId: '3000000001' })
     expect(done.status).toBe('ready')
 
     const progress = await setup.progress()
@@ -329,12 +333,12 @@ describe('T29 —— 世界步接上之后：四步走完到 ready', () => {
     expect(files).toContain('world-status.md')
     const record = JSON.parse(await readFile(setupFile(home), 'utf8')) as { completed: string[]; accountId?: string }
     expect(record.completed).toEqual(['persona', 'background', 'world', 'accounts'])
-    expect(record.accountId).toBe('2000000002')
+    expect(record.accountId).toBe('3000000001')
   })
 
   it('⭐ 世界步真跑过之后，回退 world 再重跑要 `rebuild`（否则拒 —— 防手滑推倒她的世界）', async () => {
     const home = await makeHome()
-    const setup = startService(home, fakeOneBot(['2000000002'], ['2000000002']))
+    const setup = startService(home, fakeOneBot(['3000000001'], ['3000000001']))
     setup.worldModel = scriptedModel()
     await setup.run('persona')
     await setup.run('background')
@@ -370,7 +374,7 @@ describe('T29 —— 世界步接上之后：四步走完到 ready', () => {
   it('⭐ 装配里有 `ctx.worldModel` 服务时，世界步自己找到它（真实接线的形态）', async () => {
     const home = await makeHome()
     // 不设 `setup.worldModel` 字段 —— 只放一个服务，模拟 T27b 的 `world-model` 行
-    const setup = startService(home, fakeOneBot(['2000000002'], ['2000000002']), undefined, {
+    const setup = startService(home, fakeOneBot(['3000000001'], ['3000000001']), undefined, {
       call: scriptedModel(),
     })
 
@@ -383,7 +387,7 @@ describe('T29 —— 世界步接上之后：四步走完到 ready', () => {
   it('显式设过的字段优先于服务（测试注入 / 装配覆盖的语义）', async () => {
     const home = await makeHome()
     let serviceCalled = false
-    const setup = startService(home, fakeOneBot(['2000000002'], ['2000000002']), undefined, {
+    const setup = startService(home, fakeOneBot(['3000000001'], ['3000000001']), undefined, {
       call: async () => {
         serviceCalled = true
         throw new Error('服务不该被调用 —— 显式字段优先')

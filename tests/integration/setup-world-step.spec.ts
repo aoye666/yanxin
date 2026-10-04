@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { personaDir, worldDir } from '../../src/setup/install.ts'
+import { readEmbeddedPersona } from '../../src/preset/persona-embed.ts'
 import { inspect, runWorldStep } from '../../src/setup/world-step.ts'
 import { SetupError } from '../../src/setup/types.ts'
 import type { CallWorldModel } from '../../src/world/arbiter.ts'
@@ -157,34 +158,26 @@ describe('T29 —— 失败不留半成品（顺序：先创世、后时钟）',
     expect(outcome.sequence).toBe(1)
   })
 
-  it('⭐ 世界定义被改过却没重新生成 preset → 拦住（世界与她的提示词不许分叉）', async () => {
+  it('⭐ 改过人格源再重跑 → 新定义**同时**进 preset 与创世（同源由构造保证，不靠拦）', async () => {
     const home = await makeHome()
-    const { callModel, prompts } = scripted([{ entities: entities() }])
+    const { callModel, prompts } = scripted([{ entities: entities() }, { entities: entities() }])
     await runWorldStep(options(home, callModel)) // 第一次：装源 + 创世
 
-    // 运营者手改了装到位的那份世界定义（而 preset 还是老的那份）
-    await writeFile(join(personaDir(home), 'world.md'), '我自己写的世界定义。', 'utf8')
+    const mine = '小研住在一个很小的阁楼里，窗台上有一盆没养活的薄荷。'
+    await writeFile(join(personaDir(home), 'world.md'), mine, 'utf8')
 
-    const before = prompts.length
-    try {
-      await runWorldStep(options(home, callModel, { rebuild: true }))
-      expect.unreachable('应当拦住分叉')
-    } catch (error) {
-      expect((error as SetupError).code).toBe('STEP_BLOCKED')
-      expect((error as SetupError).summary).toContain('build-presets.mjs')
-    }
-    expect(prompts.length).toBe(before) // 连模型都没调
+    const outcome = await runWorldStep(options(home, callModel, { rebuild: true }))
+    expect(outcome.sequence).toBe(1) // 新世界从 #1 重新起算
 
-    // ⭐ 旧世界**还在原地**：校验失败不得先把活跃世界挪进归档（修复前它会被先
-    //    rename 走，engine 拒载、恢复要手工改回目录名）
-    const world = await inspect(join(home, 'yanxin/world'))
-    expect(world.transactions).toBe(1) // 第一次创世的那条事务原封未动
-    const siblings = await readdir(join(home, 'yanxin'))
-    expect(siblings.some((name) => name.includes('-archive-'))).toBe(false)
+    // ① 装载的那份：已安装 preset 里嵌的人格段用的是**新写的**定义
+    const yml = await readFile(join(home, '.agent-presets', 'xiaoyan-world', 'agent.cordis.yml'), 'utf8')
+    expect(readEmbeddedPersona(yml)).toContain(mine)
+
+    // ② 创世用的那份：喂给世界模型的 prompt 里也是同一句 —— 两处不同源就是这一步的缺陷本体
+    expect(prompts.at(-1)).toContain(mine)
   })
 
-  it('⚠️ 重跑**不覆盖**运营者改过的人格源 —— 这条在单元层测（见 setup-install.spec.ts）：' +
-    '改了源就会被上面的"分叉检查"先拦住，所以走不到这一步', async () => {
+  it('⚠️ 重跑**不覆盖**运营者改过的人格源（出厂文本只是起点，不是真相）', async () => {
     const home = await makeHome()
     const { callModel } = scripted([{ entities: entities() }])
     await runWorldStep(options(home, callModel))
@@ -192,9 +185,25 @@ describe('T29 —— 失败不留半成品（顺序：先创世、后时钟）',
     const mine = '小研住在一个很小的阁楼里。'
     await writeFile(join(personaDir(home), 'world.md'), mine, 'utf8')
 
-    // 源文件**留在原样**（没有被那一次失败的重跑覆盖掉）
-    await expect(runWorldStep(options(home, callModel, { rebuild: true }))).rejects.toThrow(SetupError)
+    await runWorldStep(options(home, callModel, { rebuild: true }))
     expect(await readFile(join(personaDir(home), 'world.md'), 'utf8')).toBe(mine)
+  })
+
+  it('⭐ 装配失败时旧世界**还在原地**（不许先把活跃世界挪进归档）', async () => {
+    const home = await makeHome()
+    const { callModel } = scripted([{ entities: entities() }])
+    await runWorldStep(options(home, callModel))
+
+    // 一个没有 presets/ 的包根 → installPresets 直接抛（打包坏了），走到不了创世
+    const broken = { ...options(home, callModel, { rebuild: true }), packageRoot: join(home, 'empty-package') }
+    await mkdir(join(home, 'empty-package', 'persona'), { recursive: true })
+    await writeFile(join(home, 'empty-package', 'persona', 'world.md'), '出厂文本', 'utf8')
+    await expect(runWorldStep(broken)).rejects.toThrow(/一个 preset 都没有/)
+
+    const world = await inspect(join(home, 'yanxin/world'))
+    expect(world.transactions).toBe(1) // 第一次创世的那条事务原封未动
+    const siblings = await readdir(join(home, 'yanxin'))
+    expect(siblings.some((name) => name.includes('-archive-'))).toBe(false)
   })
 })
 

@@ -1,0 +1,95 @@
+# 镜像的冒烟验收 —— 本机 Docker 起不来时，这里是唯一的真判据
+#
+# 验的不是"build 过了"，而是那件**只看容器 healthy 证明不了**的事：
+# 记忆线真的接上了（`provider: reme` 写进了 patch、ReMe 在容器里响应 `POST /health_check`），
+# 以及控制台的远程放行确实生效（从宿主机打得开）。
+#
+# ⚠️ 推镜像到 GHCR 只在打 tag 时发生（`v*`），日常的 push / PR 只构建不发布。
+
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t yanxin:smoke .
+
+      - name: Start it with a fake gateway
+        # 假路由让 dsh 的 LLM 调用失败，但**装配必须起来** —— 这里要验的就是装配。
+        # ReMe 不碰 LLM 也能起服务（`auto_memory` 才会 404，而那是运行期的事）。
+        run: |
+          docker run -d --name yanxin \
+            -p 3080:3080 -p 8080:8080 \
+            -e LLM_BASE_URL=http://127.0.0.1:9/ \
+            -e LLM_API_KEY=smoke-not-a-real-key \
+            -e LLM_MODEL_NAME=smoke-model \
+            -e YANXIN_ONEBOT_TOKEN=smoke-onebot-token \
+            -e YANXIN_CONSOLE_TOKEN=smoke-console-token \
+            yanxin:smoke
+          # 首页是免凭据的只读页；容器内 curl 与宿主机 curl 走的是**两道不同的门**
+          for i in $(seq 1 40); do
+            if curl -fsS -L http://127.0.0.1:3080/yanxin/ >/dev/null 2>&1; then ok=1; break; fi
+            sleep 5
+          done
+          [ "${ok:-}" = 1 ] || { docker logs yanxin; exit 1; }
+
+      - name: ⭐ 记忆线在镜像里真的起来了（不是 provider=none 的空转）
+        run: |
+          docker exec yanxin curl -fsS -X POST -d '{}' http://127.0.0.1:2333/health_check >/dev/null
+          docker logs yanxin 2>&1 | grep -q 'REME_SERVICE_INFO'
+          # profile patch 里必须真的写了 reme —— 缺这一行时召回恒空且不报错
+          docker exec yanxin sh -c "grep -A2 'id: memory' /home/node/.dsh/profiles/yanxin/cordis.patch.yml" | grep -q 'provider: reme'
+
+      - name: 控制台从容器外可达（远程放行生效）
+        # 宿主机来的请求在容器里看是**非回环**地址 —— 这正是 S1 那道门要放的情形
+        run: curl -fsS -L http://127.0.0.1:3080/yanxin/api/page/persona >/dev/null
+
+      - name: 启动日志里有那条"已允许远程访问"的 WARN
+        run: docker logs yanxin 2>&1 | grep -q '已允许远程访问'
+
+      - name: 非沙箱 shell 的边界（沙箱提供者没抢注 `shell`）
+        run: |
+          ! docker logs yanxin 2>&1 | grep -q 'service "shell" has been registered'
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs yanxin 2>&1 | tail -120
+          docker inspect yanxin --format '{{json .State}}'
+
+  # 发布只在打 tag 时发生；包级权限在这里显式要，避免"CI 里悄悄能推任意镜像"
+  publish:
+    needs: build-and-smoke
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}

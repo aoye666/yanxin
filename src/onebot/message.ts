@@ -28,6 +28,12 @@ export type Segment =
   | { kind: 'image'; file: string; url?: string }
   | { kind: 'reply'; id: string }
   | { kind: 'face'; id: string }
+  /**
+   * 合并转发 / 单条转发。`inline` 是**数组形态**里可能带在 `data.content` 上的那些节点
+   * （NapCat 有时直接内联，省一次 `get_forward_msg`）；string 形态下没有它。
+   * 展开在 `forward.ts`，这里只负责"认出有这么一段并把它原样带出去"。
+   */
+  | { kind: 'forward'; id: string; inline: unknown }
   | { kind: 'other'; type: string; data: Record<string, string> }
 
 export interface NormalizedMessage {
@@ -43,6 +49,8 @@ export interface NormalizedMessage {
   replyTo: string | undefined
   /** 图片的 file 字段列表 */
   images: string[]
+  /** 转发段（按出现顺序）；桥据此决定要不要去 `get_forward_msg` 拉内容。 */
+  forwards: Array<{ id: string; inline: unknown }>
   /** 原始 `raw_message`（恒为 string，供诊断与兜底） */
   raw: string
 }
@@ -106,8 +114,13 @@ export function parseCqString(input: string): Array<{ type: string; data: Record
   return out
 }
 
-/** 把 `{type, data}` 形态的一段转成归一化分段。 */
-export function toSegment(type: string, data: Record<string, string>): Segment {
+/**
+ * 把 `{type, data}` 形态的一段转成归一化分段。
+ *
+ * `raw` 是**未经 string 化的原始 data**：`asString` 会把数组/对象压成空串，
+ * 而合并转发的节点正是一个数组（`data.content`）—— 只靠 `data` 就会把它读没了。
+ */
+export function toSegment(type: string, data: Record<string, string>, raw?: unknown): Segment {
   switch (type) {
     case 'text':
       return { kind: 'text', text: data.text ?? '' }
@@ -119,14 +132,22 @@ export function toSegment(type: string, data: Record<string, string>): Segment {
       return { kind: 'reply', id: data.id ?? '' }
     case 'face':
       return { kind: 'face', id: data.id ?? '' }
+    case 'forward':
+      // `id` 是合并转发的消息 id（拿去问 `get_forward_msg`）；`content` 是数组形态下
+      // 可能已经内联的节点。两者都原样带出去，展开在 forward.ts。
+      return {
+        kind: 'forward',
+        id: data.id ?? '',
+        inline: (raw as { content?: unknown } | undefined)?.content,
+      }
     default:
       return { kind: 'other', type, data }
   }
 }
 
 /** 从 `array` 形态的 `message` 取分段。 */
-function fromArray(value: unknown[]): Array<{ type: string; data: Record<string, string> }> {
-  const out: Array<{ type: string; data: Record<string, string> }> = []
+function fromArray(value: unknown[]): Array<{ type: string; data: Record<string, string>; raw?: unknown }> {
+  const out: Array<{ type: string; data: Record<string, string>; raw?: unknown }> = []
   for (const item of value) {
     if (item === null || typeof item !== 'object') continue
     const obj = item as Record<string, unknown>
@@ -137,13 +158,17 @@ function fromArray(value: unknown[]): Array<{ type: string; data: Record<string,
     if (rawData !== null && typeof rawData === 'object' && !Array.isArray(rawData)) {
       for (const [k, v] of Object.entries(rawData as Record<string, unknown>)) data[k] = asString(v)
     }
-    out.push({ type, data })
+    out.push({ type, data, raw: rawData })
   }
   return out
 }
 
-/** 分段 → 给 LLM 读的文本。 */
-function renderText(segments: readonly Segment[]): string {
+/**
+ * 分段 → 给 LLM 读的文本。
+ *
+ * 导出是给 `forward.ts` 用的：它要按段拼正文，而占位符规则只该有一份。
+ */
+export function renderText(segments: readonly Segment[]): string {
   const parts: string[] = []
   for (const seg of segments) {
     switch (seg.kind) {
@@ -162,6 +187,11 @@ function renderText(segments: readonly Segment[]): string {
       case 'reply':
         // 回复引用不占正文位置：它表达的是"这条消息在回谁"，不是内容
         break
+      case 'forward':
+        // 占位符。展开后桥会把这段替换成"谁在什么时候说了什么"（见 `forward.ts`）；
+        // **拉不到时就留在这里** —— 她至少知道有人转发了东西。
+        parts.push('[forward]')
+        break
       case 'other':
         parts.push(`[${seg.type}]`)
         break
@@ -178,7 +208,7 @@ function renderText(segments: readonly Segment[]): string {
 export function normalizeMessage(message: unknown, rawMessage?: unknown): NormalizedMessage {
   const raw = typeof rawMessage === 'string' ? rawMessage : ''
 
-  let pairs: Array<{ type: string; data: Record<string, string> }>
+  let pairs: Array<{ type: string; data: Record<string, string>; raw?: unknown }>
   if (Array.isArray(message)) {
     pairs = fromArray(message)
   } else if (typeof message === 'string') {
@@ -187,12 +217,13 @@ export function normalizeMessage(message: unknown, rawMessage?: unknown): Normal
     pairs = []
   }
 
-  const segments = pairs.map((p) => toSegment(p.type, p.data))
+  const segments = pairs.map((p) => toSegment(p.type, p.data, p.raw))
 
   const at: string[] = []
   let atAll = false
   let replyTo: string | undefined
   const images: string[] = []
+  const forwards: Array<{ id: string; inline: unknown }> = []
 
   for (const seg of segments) {
     if (seg.kind === 'at') {
@@ -202,8 +233,10 @@ export function normalizeMessage(message: unknown, rawMessage?: unknown): Normal
       if (!replyTo && seg.id) replyTo = seg.id
     } else if (seg.kind === 'image') {
       if (seg.file) images.push(seg.file)
+    } else if (seg.kind === 'forward') {
+      forwards.push({ id: seg.id, inline: seg.inline })
     }
   }
 
-  return { text: renderText(segments), segments, at, atAll, replyTo, images, raw }
+  return { text: renderText(segments), segments, at, atAll, replyTo, images, forwards, raw }
 }

@@ -92,12 +92,17 @@ interface Connection {
 
 /** 抛出这个错误表示"连接没了/调用超时"，调用方据此决定是否重试或降级。 */
 export class OneBotCallError extends Error {
+  readonly kind: 'no-connection' | 'timeout' | 'closed' | 'api-failed'
+  readonly retcode?: number
+
   constructor(
     message: string,
-    readonly kind: 'no-connection' | 'timeout' | 'closed' | 'api-failed',
-    readonly retcode?: number,
+    kind: 'no-connection' | 'timeout' | 'closed' | 'api-failed',
+    retcode?: number,
   ) {
     super(message)
+    this.kind = kind
+    this.retcode = retcode
     this.name = 'OneBotCallError'
   }
 }
@@ -200,11 +205,14 @@ export default class OneBotService extends Service {
   /** 监听就绪。`port` 传 0 时由系统分配，测试与控制台都靠它拿到真实端口。 */
   readonly ready: Promise<void>
 
+  private readonly config: Config
+
   constructor(
     ctx: Context,
-    private readonly config: Config,
+    config: Config,
   ) {
     super(ctx, 'onebot')
+    this.config = config
 
     this.scope = ctx.settings.register(ONEBOT_SETTINGS_NS, TransportSchema)
     this.wss = new WebSocketServer({ noServer: true, clientTracking: false })

@@ -13,17 +13,29 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  authorize,
+  ALLOW_REMOTE_ENV,
+  authorize as authorizeRaw,
   isLoopbackAddress,
   normalizePath,
   readToken,
+  remoteAccessAllowed,
   requiresToken,
   tokenEquals,
   TOKEN_ENV,
+  type AuthorizeInput,
 } from '../../src/console/logic.ts'
 import { CONSOLE_CLIENT_SCRIPT, CONSOLE_MARKDOWN_FILL, CONSOLE_SHELL } from '../../src/console/client.ts'
 
-describe('T31 —— 门一：只服务回环', () => {
+/**
+ * 下面那批 token 用例把地址维度**固定成"回环内"**（它们要证的是凭据那一维）。
+ * 地址那一维单独一组（`门一：在哪儿敲门`），所以这里不放过任何"忘了传"的写法 ——
+ * 少一个键就编译不过，正是 `AuthorizeInput` 把两个字段做成必填的目的。
+ */
+function authorize(input: Omit<AuthorizeInput, 'loopback' | 'allowRemote'>) {
+  return authorizeRaw({ loopback: true, allowRemote: false, ...input })
+}
+
+describe('T31 —— 门一：在哪儿敲门', () => {
   const cases: { address: string | undefined; loopback: boolean; why: string }[] = [
     { address: '127.0.0.1', loopback: true, why: '标准回环' },
     { address: '127.5.6.7', loopback: true, why: '整个 127/8 都是回环' },
@@ -46,6 +58,110 @@ describe('T31 —— 门一：只服务回环', () => {
       expect(isLoopbackAddress(testCase.address)).toBe(testCase.loopback)
     })
   }
+})
+
+describe('T31 —— 门一之二：远程访问要显式开（默认关）', () => {
+  it('非回环 + 没开远程 → 403，而且**连 token 都不看**（带对了也拒）', () => {
+    const verdict = authorizeRaw({
+      method: 'GET',
+      path: '/api/page/world',
+      provided: 's3cret',
+      expected: 's3cret',
+      loopback: false,
+      allowRemote: false,
+    })
+    expect(verdict.allowed).toBe(false)
+    if (!verdict.allowed) {
+      expect(verdict.status).toBe(403)
+      // 原因里必须告诉他怎么打开 —— 只说"不行"的报错会让人去查 token，方向直接带偏
+      expect(verdict.reason).toContain(ALLOW_REMOTE_ENV)
+    }
+  })
+
+  it('非回环 + 开了远程 + 普通只读 → 放行（Docker 形态的浏览器能打开页面）', () => {
+    expect(
+      authorizeRaw({
+        method: 'GET',
+        path: '/api/page/world',
+        provided: undefined,
+        expected: 's3cret',
+        loopback: false,
+        allowRemote: true,
+      }).allowed,
+    ).toBe(true)
+  })
+
+  it('⭐ 开了远程**不等于**免凭据：写操作与日志流照旧要 token', () => {
+    const post = authorizeRaw({
+      method: 'POST',
+      path: '/api/admins/add',
+      provided: undefined,
+      expected: 's3cret',
+      loopback: false,
+      allowRemote: true,
+    })
+    expect(post.allowed).toBe(false)
+    if (!post.allowed) expect(post.status).toBe(401)
+
+    const stream = authorizeRaw({
+      method: 'GET',
+      path: '/api/log/stream',
+      provided: undefined,
+      expected: 's3cret',
+      loopback: false,
+      allowRemote: true,
+    })
+    expect(stream.allowed).toBe(false)
+
+    // 没配 token 时远程写操作仍然 fail-closed（403，不是放行）
+    const noEnv = authorizeRaw({
+      method: 'POST',
+      path: '/api/admins/add',
+      provided: 'whatever',
+      expected: undefined,
+      loopback: false,
+      allowRemote: true,
+    })
+    expect(noEnv.allowed).toBe(false)
+    if (!noEnv.allowed) expect(noEnv.status).toBe(403)
+  })
+
+  it('回环内的行为一字没变（本机裸装那条路不受这一档影响）', () => {
+    for (const allowRemote of [false, true]) {
+      expect(
+        authorizeRaw({
+          method: 'GET',
+          path: '/api/page/settings',
+          provided: undefined,
+          expected: undefined,
+          loopback: true,
+          allowRemote,
+        }).allowed,
+      ).toBe(true)
+    }
+  })
+
+  it('开关只认 `1` / `true`：写错算没开（宁可"设了没生效"，不要"没设却开了"）', () => {
+    const cases: [string | undefined, boolean][] = [
+      ['1', true],
+      ['true', true],
+      ['TRUE', true],
+      [' 1 ', true],
+      ['0', false],
+      ['false', false],
+      ['yes', false],
+      ['on', false],
+      ['', false],
+      [undefined, false],
+    ]
+    for (const [value, expected] of cases) {
+      expect(remoteAccessAllowed({ [ALLOW_REMOTE_ENV]: value }), `${ALLOW_REMOTE_ENV}=${JSON.stringify(value)}`).toBe(
+        expected,
+      )
+    }
+    // 没这个键的 env 对象 = 默认关
+    expect(remoteAccessAllowed({ PATH: '/bin' })).toBe(false)
+  })
 })
 
 describe('T31 —— 门二：写操作与日志流要 token', () => {
