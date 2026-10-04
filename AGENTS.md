@@ -7,7 +7,8 @@
 
 研心是一个 DeepSeek Harness (DSH) bundle：TypeScript 源码在 `src/`，测试在 `tests/`，
 三个 agent preset（群聊 / 管理员 / 世界）在 `presets/`，人格源文件在 `persona/`，
-部署层模板在 `deploy/`。
+部署层模板在 `deploy/`，容器形态在 `Dockerfile` + `docker/`（记忆后端 ReMe 的源树 vendored 在
+`third_party/reme/`）。
 
 **它不是一个独立可跑的程序** —— 它靠 `dsh plugin --profile <名字> add ./` 挂进 DSH 运行时
 （公开 npm 包 `@deepseek-ai/dsh`，本仓按 `0.1.5-rc.3` 写）。入口是 `lib/`，不是 `src/`。
@@ -17,7 +18,7 @@
 ```bash
 pnpm run typecheck   # tsc — 类型安全（strict + noUncheckedIndexedAccess）
 pnpm run lint        # oxlint — 正确性 = error，可疑 = warn
-pnpm run test        # vitest run — 单元 + 集成（59 个 spec 文件）
+pnpm run test        # vitest run — 单元 + 集成（71 个 spec 文件，1303 个用例）
 pnpm run build       # tsc -p tsconfig.build.json → lib/
 ```
 
@@ -48,7 +49,14 @@ pnpm run presets
 这会同时更新 `presets/xiaoyan-agent/`、`presets/xiaoyan-admin/`、`presets/xiaoyan-world/`
 的 `agent.cordis.yml` 和 `preset.yml`。
 
+⚠️ 人格文本所在的键是 **`prefix`**，不是 `text` —— 发布版 `@deepseek-ai/dsh-persona` 的 Config 是
+`{prefix, suffix, complete, includeRuntimeContext}`。写成 `text` 时三个 preset 全部挂在
+`$.prefix missing required value` 上，症状是**她人格掉光、不回话**。键名常量的唯一来源是
+`src/preset/persona-embed.ts` 的 `PERSONA_TEXT_KEY`（生成器和控制台写入路径共用它）。
+
 `persona/` 出厂是**空模板**：章节结构与说话纪律是通用的，人格内容留空给你写。
+判"有没有人写过"看的是**模板里的 TODO 行**（`src/preset/render.ts`），不是文件非空 ——
+空模板有一大堆标题和说明，看非空会误判"人格已装好"。
 
 ## cordis.patch.yml 分层纪律
 
@@ -68,6 +76,12 @@ pnpm run presets
 provider 放 host 平面（进程级单例），工具行由 preset 声明——反了会撞服务名，
 而 host 平面的工具行会**泄漏**进每个 agent（spec §7.4-B 与附录 A #16）。
 
+⚠️ **键要挂在对的行上**。`onebot`（传输层）与 `onebot-bridge`（策略层）是两行：
+`dryRun` / `contextMessages` / `groupTrigger` / `maxReplyChars` / 分段那几项属于**桥**，
+写进 `onebot` 行既不报错也不生效 —— patch 没有深度合并、行 id 对不上也不报，症状是
+"配置看着在，实际一路静默落回代码缺省"。机械守卫读两个插件**自己声明的 config schema**
+来断言键的行归属（`tests/unit/deploy-profile.spec.ts`），所以加了新键不用去测试里抄名单。
+
 ## 关键结论索引（原 ADR 的一句话版）
 
 | 编号 | 主题 | 一句话 |
@@ -79,6 +93,7 @@ provider 放 host 平面（进程级单例），工具行由 preset 声明——
 | 0013 | 工具平面泄漏 | host 平面工具会泄漏到 agent，必须显式 disable + preset 声明 |
 | 0014 | 记忆接入 | ReMe 的协议是它自己定的：cwd 决定 `.env` 能否加载、失败藏在 200 里 |
 | 0017 | URL 守卫收口 | 守卫只 own 起始 URL；IPv4-in-IPv6 四种封装都得按里面的 v4 判 |
+| 0023 | OneBot 传输参数热改 | host/port/path/token 提到 settings；非回环要 token + 确认；换绑失败必须退回原监听 |
 
 完整推导与取证在 `docs/spec.md`（§7.4 安全约束、§6.10 shell、附录 A 被证伪假设）。
 
@@ -91,15 +106,35 @@ provider 放 host 平面（进程级单例），工具行由 preset 声明——
 - 表驱动用例优先（参考 `tests/unit/url-guard.spec.ts`）
 - **不要为了让 CI 变绿而删失败的测试**（spec §9 Never）
 
+三条这轮 newly 学到的纪律，改测试时照着做：
+
+- **等异步链路不要猜宏任务**。入站是 `ctx.emit('onebot/event', …)`，emit 不返回 promise，
+  所以"跑完了没有"要问实现自己：桥有 `drainQueues()`（配从 listener 进门就记的 `inFlight`），
+  记忆侧有 `pendingRoundsTotal()`（写回是刻意挂在会话队列之外的，沉淀要跑十几秒不该挡下一轮，
+  所以两个口径都得等）。假环境的 `settle()` 就是这两个口径的组合 —— 别再往 spec 里塞
+  `setTimeout(0)` 循环，也不要给某条用例单独打"轮询到 n 条"的补丁。
+- **测试不依赖这份包有没有真内容**。向导那两条线用 `tests/fixtures/package-root`
+  （填好的夹具 persona + 三个形状与真产物一致的 preset），而不是仓库自己的 `persona/` ——
+  本包的 `persona/` 按设计是空模板，拿它当"装备齐全"就必红。同理：**别把仓名、目录名写死**
+  进断言（比对 `process.cwd()` 的最后一段）。
+- **真实标识不进仓**。她的 QQ 号、主人的 QQ 号、真实群号一律占位（`3000000001` /
+  `2000000001` / `3000000003`），真值只在 `$DSH_HOME`。黑名单在
+  `tests/unit/source-hygiene.spec.ts` 末尾，且黑名单本身**拆成两段存** —— 那个文件也在扫描
+  范围内，写成整串就是亲手把真值请回仓库（`no-useless-concat` 会劝你合并，别听它的）。
+
 ## 目录速查
 
 ```
-src/          源码（net/ onebot/ admin/ memory/ world/ console/ setup/ audit/ window/）
-tests/unit/   单元测试        tests/integration/   集成测试
-presets/      三个 agent preset（生成产物）
+src/          源码（net/ onebot/ world/ memory/ console/ setup/ admin/ audit/ window/ preset/）
+tests/        unit/ integration/ support/ fixtures/（package-root 是向导测试的夹具包根）
+presets/      三个 agent preset（生成产物 —— 改 persona 后要 pnpm run presets）
 persona/      人格源文件（base.md / profile.md / world.md）—— 出厂是空模板
-deploy/       profile.example.cordis.patch.yml（部署层模板）
-docs/         spec.md（单一事实源）、development-notes.md（开发注意事项与未修清单）
+deploy/       profile.example（本机）与 profile.docker（容器）两份部署层模板
+docker/       entrypoint.mjs：一个容器里两个进程的装配与首启落盘
+third_party/  reme —— vendored 的 ReMe 源树（Apache-2.0；改动说明在 UPSTREAM.md）
+docs/         spec.md（单一事实源）、development-notes.md（开发注意事项）
 scripts/      install.mjs（部署）、build-presets.mjs（生成 preset）
+.github/      workflows/image.yml —— 镜像构建 + 起容器冒烟（记忆线、远程可达、shell 边界）
+Dockerfile    单镜像形态
 cordis.patch.yml   DSH 装配 patch（结构 + 行级开关）
 ```
