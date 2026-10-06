@@ -2,6 +2,9 @@
 
 小研的 harness。基于 DeepSeek Harness（DSH）的插件 bundle：**一个 bot 实例、两套运行模式（agent / world）、同一人格基底**。
 
+# 更新说明
+由于本人高三备考限制，从现在到2027年高考这段时期，研心项目将进入维护状态，将不会有大/破坏性改动，不会开发新功能呢。
+
 | 侧面 | 实现 |
 |---|---|
 | 消息通道 | OneBot v11 反向 WebSocket（NapCat / SnowLuma 连进来，协议层自建，只依赖 `ws`） |
